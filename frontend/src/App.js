@@ -7,10 +7,14 @@ import Footer from './components/Footer';
 import VenueSelection from './components/Venueselection';
 import Booking from './components/Booking';
 import VenueDetail from './components/Venuedetail';
-import './App.css';
 import Contact from './components/Contact';
+import Dashboard from './components/Dashboard';
+import AboutUs from './components/AboutUs';
 
-// Inside <Routes>:
+import Chat from './components/Chat';
+
+import './App.css';
+
 function HomePage() {
     return (
         <div className="App">
@@ -33,8 +37,11 @@ function App() {
                 <Route path="/venues" element={<VenueSelection />} />
                 <Route path="/venue-detail" element={<VenueDetail />} />
                 <Route path="/booking" element={<Booking />} />
-                <Route path="*" element={<Navigate to="/" />} />
                 <Route path="/contact" element={<Contact />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="*" element={<Navigate to="/" />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/about" element={<AboutUs />} />
 
             </Routes>
         </BrowserRouter>
