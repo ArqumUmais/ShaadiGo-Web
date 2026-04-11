@@ -4,15 +4,22 @@ import { useNavigate } from 'react-router-dom';
 
 function Header() {
     const navigate = useNavigate();
+    const loggedInUser = JSON.parse(localStorage.getItem('shaadigo_user') || 'null');
 
     return (
         <header>
-            <span className="brand">ShaadiGo</span>
+            <span className="brand" onClick={() => navigate('/')} style={{ cursor: 'pointer' }}>
+                ShaadiGo
+            </span>
             <div className="header-nav">
-                <a href="#">About Us</a>
-                <span onClick={() => navigate('/venues')} style={{ cursor: 'pointer' }}>Venues</span>
-                <a href="#">Booking</a>
-                <span onClick={() => navigate('/contact')} style={{ cursor: 'pointer' }}>Contact</span>
+                <span className="nav-link" onClick={() => navigate('/about')}>About Us</span>
+                <span className="nav-link" onClick={() => navigate('/venues')}>Venues</span>
+                <span className="nav-link" onClick={() => navigate('/contact')}>Contact</span>
+                {loggedInUser && (
+                    <span className="nav-dashboard" onClick={() => navigate('/dashboard')}>
+                        My Bookings
+                    </span>
+                )}
             </div>
         </header>
     );
