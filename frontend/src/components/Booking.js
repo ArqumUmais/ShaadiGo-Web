@@ -7,7 +7,6 @@ import '../style/Booking.css';
 
 const monthNames = ['January','February','March','April','May','June',
   'July','August','September','October','November','December'];
-const bookedDays = [5, 12, 19, 26];
 
 function Booking() {
   const location = useLocation();
@@ -16,79 +15,130 @@ function Booking() {
   const loggedInUser = JSON.parse(localStorage.getItem('shaadigo_user') || 'null');
 
   const today = new Date();
-  const [viewYear, setViewYear] = useState(today.getFullYear());
-  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [viewYear, setViewYear]       = useState(today.getFullYear());
+  const [viewMonth, setViewMonth]     = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState(null);
-  const [message, setMessage] = useState({ text: '', type: '' });
+  const [unavailableDates, setUnavailableDates] = useState([]); // "YYYY-MM-DD" strings
+  const [calLoading, setCalLoading]   = useState(false);
+  const [message, setMessage]         = useState({ text: '', type: '' });
   const [form, setForm] = useState({
     fname: '', lname: '', phone: '',
     eventType: '', guests: '', special: ''
   });
 
+  // Resolve venue id — handles both hardcoded (id) and DB (venue_id)
+  const venueId = venue?.venue_id ?? venue?.id;
+
   useEffect(() => {
-    if (!venue) navigate('/venues');
-    if (!loggedInUser) {
-      alert('Please log in first.');
-      navigate('/');
-    }
+    if (!venue)         navigate('/venues');
+    if (!loggedInUser)  { alert('Please log in first.'); navigate('/'); }
   }, []);
+
+  // ── Fetch unavailable dates whenever venueId changes ──────────────────────
+  useEffect(() => {
+    if (!venueId) return;
+    setCalLoading(true);
+    fetch(`http://localhost:5001/api/booking/unavailable/${venueId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) setUnavailableDates(data.dates); // ["2025-08-05", ...]
+      })
+      .catch(() => {}) // silently fail — calendar still works, just no blocked dates
+      .finally(() => setCalLoading(false));
+  }, [venueId]);
 
   if (!venue || !loggedInUser) return null;
 
-  const serviceFee = Math.round(venue.priceNum * 0.05);
-  const total = venue.priceNum + serviceFee;
+  // Use price_per_event (DB) or priceNum (hardcoded) — whichever exists
+  const hallPrice  = Number(venue.price_per_event ?? venue.priceNum ?? 0);
+  const serviceFee = Math.round(hallPrice * 0.05);
+  const total      = hallPrice + serviceFee;
 
   const handleChange = (e) => setForm({ ...form, [e.target.id]: e.target.value });
 
-  const handleConfirm = async () => {
-    console.log('form:', form);
-    console.log('selectedDate:', selectedDate);
-    console.log('loggedInUser:', loggedInUser);
-    console.log('venue:', venue);
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const toDateStr = (y, m, d) =>
+    `${y}-${String(m + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
-    if (!selectedDate) return setMessage({ text: 'Please select a date.', type: 'error' });
-    if (!form.fname || !form.lname || !form.phone || !form.eventType)
-      return setMessage({ text: 'Please fill in all required fields.', type: 'error' });
+  const isPast = (d) =>
+    new Date(viewYear, viewMonth, d) < new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
-    const eventDate = `${viewYear}-${String(viewMonth + 1).padStart(2,'0')}-${String(selectedDate).padStart(2,'0')}`;
+  const isUnavailable = (d) =>
+    unavailableDates.includes(toDateStr(viewYear, viewMonth, d));
 
-    const payload = {
-      userId: loggedInUser.user_id,
-      fname: form.fname,
-      lname: form.lname,
-      phone: form.phone,
-      eventType: form.eventType,
-      guests: form.guests,
-      venueId: venue.id,
-      eventDate,
-      advancePaid: serviceFee
-    };
+  const isToday = (d) =>
+    d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
 
-    console.log('payload:', payload);
+  const isSelected = (d) =>
+    selectedDate !== null &&
+    selectedDate.d === d &&
+    selectedDate.m === viewMonth &&
+    selectedDate.y === viewYear;
 
-    try {
-      const response = await axios.post('http://localhost:5001/api/booking', payload);
-      if (response.data.success) {
-        setMessage({ text: '🎉 Booking confirmed successfully! Redirecting...', type: 'success' });
-        setTimeout(() => navigate('/venues'), 2500);
-      }
-    } catch (err) {
-      console.error('Error:', err.response?.data);
-      setMessage({ text: err.response?.data?.message || 'Something went wrong.', type: 'error' });
-    }
+  const handleDayClick = (d) => {
+    if (isPast(d) || isUnavailable(d)) return;
+    setSelectedDate({ d, m: viewMonth, y: viewYear });
   };
 
-  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const prevMonth = () => {
+    setSelectedDate(null);
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+    else setViewMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    setSelectedDate(null);
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+    else setViewMonth(m => m + 1);
+  };
+
+  const selectedDateStr = selectedDate
+    ? `${selectedDate.d} ${monthNames[selectedDate.m]} ${selectedDate.y}`
+    : 'Not selected';
+
+  const eventDateISO = selectedDate
+    ? toDateStr(selectedDate.y, selectedDate.m, selectedDate.d)
+    : null;
+
+  // ── Calendar grid ─────────────────────────────────────────────────────────
+  const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const calDays = [];
   for (let i = 0; i < firstDay; i++) calDays.push(null);
   for (let d = 1; d <= daysInMonth; d++) calDays.push(d);
 
-  const prevMonth = () => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y=>y-1); } else setViewMonth(m=>m-1); setSelectedDate(null); };
-  const nextMonth = () => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y=>y+1); } else setViewMonth(m=>m+1); setSelectedDate(null); };
-  const isPast = (d) => new Date(viewYear, viewMonth, d) < new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const isToday = (d) => d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
-  const selectedDateStr = selectedDate ? `${selectedDate} ${monthNames[viewMonth]} ${viewYear}` : 'Not selected';
+  // ── Submit ────────────────────────────────────────────────────────────────
+  const handleConfirm = async () => {
+    if (!eventDateISO)
+      return setMessage({ text: 'Please select a date.', type: 'error' });
+    if (!form.fname || !form.lname || !form.phone || !form.eventType)
+      return setMessage({ text: 'Please fill in all required fields.', type: 'error' });
+
+    const payload = {
+      userId:      loggedInUser.user_id,
+      fname:       form.fname,
+      lname:       form.lname,
+      phone:       form.phone,
+      eventType:   form.eventType,
+      guests:      form.guests,
+      special:     form.special,
+      venueId,
+      eventDate:   eventDateISO,
+      advancePaid: serviceFee,
+    };
+
+    try {
+      const response = await axios.post('http://localhost:5001/api/booking', payload);
+      if (response.data.success) {
+        // Block this date locally so calendar updates instantly
+        setUnavailableDates(prev => [...prev, eventDateISO]);
+        setSelectedDate(null);
+        setMessage({ text: '🎉 Booking confirmed! Redirecting…', type: 'success' });
+        setTimeout(() => navigate('/venues'), 2500);
+      }
+    } catch (err) {
+      setMessage({ text: err.response?.data?.message || 'Something went wrong.', type: 'error' });
+    }
+  };
 
   return (
     <div className="bk-page">
@@ -130,12 +180,12 @@ function Booking() {
         )}
 
         <div className="bk-layout">
+          {/* ── FORM ── */}
           <div className="bk-form-card">
-
             <div style={{
-              background: 'rgba(212,175,55,0.1)', border: '1px solid rgba(212,175,55,0.3)',
-              borderRadius: '8px', padding: '10px 14px', marginBottom: '20px',
-              fontSize: '0.82rem', color: 'var(--maroon)'
+              background:'rgba(212,175,55,0.1)', border:'1px solid rgba(212,175,55,0.3)',
+              borderRadius:'8px', padding:'10px 14px', marginBottom:'20px',
+              fontSize:'0.82rem', color:'var(--maroon)'
             }}>
               Booking as: <strong>{loggedInUser.username}</strong>
             </div>
@@ -195,7 +245,9 @@ function Booking() {
 
             <div className="bk-field">
               <label htmlFor="special">Special Requests</label>
-              <textarea id="special" placeholder="Any specific requirements, décor preferences, catering notes…" value={form.special} onChange={handleChange}></textarea>
+              <div className="bk-input-wrap">
+                <textarea id="special" placeholder="Any specific requirements, décor preferences, catering notes…" value={form.special} onChange={handleChange}></textarea>
+              </div>
             </div>
 
             <div className="bk-form-divider"></div>
@@ -217,58 +269,123 @@ function Booking() {
                 </div>
               </div>
             </div>
-
           </div>
 
+          {/* ── SIDEBAR ── */}
           <div className="bk-sidebar">
+
+            {/* AVAILABILITY CALENDAR */}
             <div className="bk-sidebar-card">
               <h3>
-                <svg viewBox="0 0 16 16" fill="none" width="15" height="15"><path d="M2 5h12M2 8h8M5 2v2M11 2v2" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="#4D0D0D" strokeWidth="1.3"/></svg>
-                Pick a Date
+                <svg viewBox="0 0 16 16" fill="none" width="15" height="15">
+                  <path d="M2 5h12M2 8h8M5 2v2M11 2v2" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/>
+                  <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="#4D0D0D" strokeWidth="1.3"/>
+                </svg>
+                Availability Calendar
               </h3>
+
+              {/* Loading indicator */}
+              {calLoading && (
+                <div style={{textAlign:'center', fontSize:'0.78rem', opacity:0.5, padding:'8px 0 4px'}}>
+                  Loading availability…
+                </div>
+              )}
+
               <div className="bk-cal-header">
                 <button className="bk-cal-nav" onClick={prevMonth}>←</button>
                 <span className="bk-cal-month">{monthNames[viewMonth]} {viewYear}</span>
                 <button className="bk-cal-nav" onClick={nextMonth}>→</button>
               </div>
+
               <div className="bk-cal-grid">
                 {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
                   <div key={d} className="bk-cal-day-name">{d}</div>
                 ))}
                 {calDays.map((d, i) => {
                   if (!d) return <div key={`e-${i}`} className="bk-cal-day empty"></div>;
-                  const past = isPast(d), booked = bookedDays.includes(d);
-                  const sel = selectedDate === d, tod = isToday(d);
+
+                  const past      = isPast(d);
+                  const booked    = isUnavailable(d);
+                  const sel       = isSelected(d);
+                  const tod       = isToday(d);
+
                   let cls = 'bk-cal-day';
-                  if (sel) cls += ' selected';
-                  else if (past) cls += ' past';
+                  if (sel)         cls += ' selected';
+                  else if (past)   cls += ' past';
                   else if (booked) cls += ' booked';
-                  else if (tod) cls += ' today';
+                  else if (tod)    cls += ' today';
+
                   return (
-                    <div key={d} className={cls} onClick={() => !past && !booked && setSelectedDate(d)}>{d}</div>
+                    <div
+                      key={d}
+                      className={cls}
+                      onClick={() => handleDayClick(d)}
+                      title={booked ? 'Already booked' : past ? 'Past date' : ''}
+                    >
+                      {d}
+                    </div>
                   );
                 })}
               </div>
+
               <div className="bk-cal-legend">
-                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'#4D0D0D'}}></div>Selected</div>
-                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.2)'}}></div>Booked</div>
-                <div className="bk-legend-item"><div className="bk-legend-dot" style={{border:'1px solid #D4AF37',background:'transparent'}}></div>Today</div>
+                <div className="bk-legend-item">
+                  <div className="bk-legend-dot" style={{background:'#4D0D0D'}}></div>Selected
+                </div>
+                <div className="bk-legend-item">
+                  <div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.2)'}}></div>Booked
+                </div>
+                <div className="bk-legend-item">
+                  <div className="bk-legend-dot" style={{border:'1px solid #D4AF37',background:'transparent'}}></div>Today
+                </div>
+                <div className="bk-legend-item">
+                  <div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.08)'}}></div>Past
+                </div>
               </div>
+
+              {/* Selected date display */}
+              {selectedDate && (
+                <div style={{
+                  marginTop:'12px', padding:'8px 12px',
+                  background:'rgba(212,175,55,0.12)', borderRadius:'7px',
+                  fontSize:'0.8rem', color:'var(--maroon)', textAlign:'center', fontWeight:600
+                }}>
+                  📅 {selectedDateStr}
+                </div>
+              )}
             </div>
 
+            {/* BOOKING SUMMARY */}
             <div className="bk-sidebar-card">
               <h3>
-                <svg viewBox="0 0 16 16" fill="none" width="15" height="15"><path d="M4 2h8a1 1 0 0 1 1 1v11l-4-2-4 2V3a1 1 0 0 1 1-1Z" stroke="#4D0D0D" strokeWidth="1.3"/></svg>
+                <svg viewBox="0 0 16 16" fill="none" width="15" height="15">
+                  <path d="M4 2h8a1 1 0 0 1 1 1v11l-4-2-4 2V3a1 1 0 0 1 1-1Z" stroke="#4D0D0D" strokeWidth="1.3"/>
+                </svg>
                 Booking Summary
               </h3>
               <div className="bk-summary-row"><span className="bk-lbl">Venue</span><span className="bk-val">{venue.name}</span></div>
               <div className="bk-summary-row"><span className="bk-lbl">Location</span><span className="bk-val">{venue.location}</span></div>
-              <div className="bk-summary-row"><span className="bk-lbl">Capacity</span><span className="bk-val">Up to {venue.capacity.toLocaleString()} guests</span></div>
-              <div className="bk-summary-row"><span className="bk-lbl">Date</span><span className="bk-val bk-hi">{selectedDateStr}</span></div>
-              <div className="bk-summary-row"><span className="bk-lbl">Event Type</span><span className="bk-val">{form.eventType || '—'}</span></div>
+              <div className="bk-summary-row">
+                <span className="bk-lbl">Capacity</span>
+                <span className="bk-val">Up to {Number(venue.capacity).toLocaleString()} guests</span>
+              </div>
+              <div className="bk-summary-row">
+                <span className="bk-lbl">Date</span>
+                <span className="bk-val bk-hi">{selectedDateStr}</span>
+              </div>
+              <div className="bk-summary-row">
+                <span className="bk-lbl">Event Type</span>
+                <span className="bk-val">{form.eventType || '—'}</span>
+              </div>
               <div className="bk-summary-divider"></div>
-              <div className="bk-summary-row"><span className="bk-lbl">Hall Price</span><span className="bk-val">PKR {venue.price}</span></div>
-              <div className="bk-summary-row"><span className="bk-lbl">Service Fee (5%)</span><span className="bk-val">PKR {serviceFee.toLocaleString()}</span></div>
+              <div className="bk-summary-row">
+                <span className="bk-lbl">Hall Price</span>
+                <span className="bk-val">PKR {hallPrice.toLocaleString('en-IN')}</span>
+              </div>
+              <div className="bk-summary-row">
+                <span className="bk-lbl">Service Fee (5%)</span>
+                <span className="bk-val">PKR {serviceFee.toLocaleString()}</span>
+              </div>
               <div className="bk-summary-divider"></div>
               <div className="bk-summary-total">
                 <span className="bk-t-label">Total</span>
@@ -276,10 +393,13 @@ function Booking() {
               </div>
               <button className="bk-btn-confirm" onClick={handleConfirm}>Confirm Booking</button>
               <div className="bk-secure-note">
-                <svg viewBox="0 0 16 16" fill="none" width="11" height="11"><path d="M8 1.5L3 4v4c0 3 2.5 5.5 5 6 2.5-.5 5-3 5-6V4L8 1.5Z" stroke="#4D0D0D" strokeWidth="1.3"/></svg>
+                <svg viewBox="0 0 16 16" fill="none" width="11" height="11">
+                  <path d="M8 1.5L3 4v4c0 3 2.5 5.5 5 6 2.5-.5 5-3 5-6V4L8 1.5Z" stroke="#4D0D0D" strokeWidth="1.3"/>
+                </svg>
                 Secure & encrypted booking
               </div>
             </div>
+
           </div>
         </div>
       </main>
