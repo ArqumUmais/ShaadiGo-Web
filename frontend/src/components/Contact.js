@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 import Header from './Header';
 import Footer from './Footer';
@@ -10,21 +10,13 @@ const INQUIRY_TYPES = [
   { key: 'feedback', icon: '⭐', name: 'Platform Feedback', desc: 'Share suggestions, improvements, or your overall experience with ShaadiGo.' },
 ];
 
-const FAQS = [
-  'How do I cancel a booking?',
-  'Can I reschedule my event date?',
-  'What is the refund policy?',
-  'How do I list my venue?',
-  'Is my payment secure?',
-];
+
 
 export default function Contact() {
   const [selectedType, setSelectedType] = useState('inquiry');
   const [priority, setPriority]         = useState('med');
-  const [files, setFiles]               = useState([]);
   const [toast, setToast]               = useState(false);
   const [errors, setErrors]             = useState({});
-  const fileInputRef                    = useRef();
 
   const [form, setForm] = useState({
     fname: '', lname: '', email: '', phone: '',
@@ -32,17 +24,6 @@ export default function Contact() {
   });
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
-
-  const handleFiles = (incoming) => {
-    setFiles(prev => [...prev, ...Array.from(incoming)]);
-  };
-
-  const removeFile = (i) => setFiles(prev => prev.filter((_, idx) => idx !== i));
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    handleFiles(e.dataTransfer.files);
-  };
 
   const handleSubmit = async () => {
     const newErrors = {};
@@ -74,7 +55,6 @@ export default function Contact() {
 
       setTimeout(() => {
         setForm({ fname: '', lname: '', email: '', phone: '', subject: '', bookingRef: '', message: '' });
-        setFiles([]);
         setSelectedType('inquiry');
         setPriority('med');
       }, 500);
@@ -224,36 +204,6 @@ export default function Contact() {
               />
             </div>
 
-            {/* FILE UPLOAD */}
-            <div
-              className="upload-zone"
-              onClick={() => fileInputRef.current.click()}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleDrop}
-            >
-              <div className="upload-icon">📎</div>
-              <p><strong>Attach screenshots or documents</strong><br />Drag &amp; drop files here, or click to browse<br /><span style={{fontSize:'0.7rem',opacity:0.4}}>PNG, JPG, PDF — max 10MB each</span></p>
-              <input
-                type="file"
-                ref={fileInputRef}
-                style={{display:'none'}}
-                multiple
-                accept=".png,.jpg,.jpeg,.pdf"
-                onChange={(e) => handleFiles(e.target.files)}
-              />
-            </div>
-
-            {files.length > 0 && (
-              <div className="file-list">
-                {files.map((f, i) => (
-                  <div key={i} className="file-tag">
-                    📎 {f.name} <span style={{opacity:0.4, fontSize:'0.68rem'}}>{(f.size/1024).toFixed(0)}KB</span>
-                    <button onClick={() => removeFile(i)}>✕</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
             <button className="contact-submit-btn" onClick={handleSubmit}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8h12M8 3l7 5-7 5" stroke="#FFE0D1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
               Send Message
@@ -299,15 +249,7 @@ export default function Contact() {
               ))}
             </div>
 
-            <div className="sidebar-card">
-              <h3>❓ Quick FAQ</h3>
-              {FAQS.map(q => (
-                <div key={q} className="faq-link">
-                  <span>{q}</span>
-                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M5 2l5 5-5 5" stroke="#4D0D0D" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </div>
-              ))}
-            </div>
+            
 
           </div>
         </div>
