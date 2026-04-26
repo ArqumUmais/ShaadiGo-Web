@@ -90,6 +90,20 @@ CREATE TABLE chat_messages (
   CONSTRAINT fk_chat_user    FOREIGN KEY (user_id)    REFERENCES users(user_id)
 );
 
+ CREATE TABLE reviews (
+  review_id   INT IDENTITY(1,1) PRIMARY KEY,
+  booking_id  INT NOT NULL,
+  user_id     INT NOT NULL,
+  venue_id    INT NOT NULL,
+  rating      DECIMAL(2,1) NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  review_text NVARCHAR(MAX),
+  created_at  DATETIME DEFAULT GETDATE(),
+  CONSTRAINT fk_review_booking FOREIGN KEY (booking_id) REFERENCES bookings(booking_id),
+  CONSTRAINT fk_review_user    FOREIGN KEY (user_id)    REFERENCES users(user_id),
+  CONSTRAINT fk_review_venue   FOREIGN KEY (venue_id)   REFERENCES venues(venue_id),
+  CONSTRAINT uq_one_review_per_booking UNIQUE (booking_id)
+);
+
 ALTER TABLE venues ALTER COLUMN emoji NVARCHAR(10);
 
 -- Update all emojis
@@ -111,10 +125,21 @@ VALUES
   ('Al-Noor Grand Hall',      'Karachi',   'Gulshan, Karachi',  900,  520000, 4.7,  89, 'Timeless elegance meets warm hospitality in this iconic Karachi venue, perfect for both intimate and grand celebrations.', '🕌'),
   ('Serene Garden Marquee',   'Islamabad', 'E-11, Islamabad',   500,  280000, 4.5,  42, 'An open-air paradise surrounded by manicured gardens, fairy lights and mountain backdrop views for an unforgettable evening.', '🏰');
 
+-- Add image support to chat_messages
+ALTER TABLE chat_messages ADD message_type VARCHAR(10) DEFAULT 'text';
+ALTER TABLE chat_messages ADD image_data   NVARCHAR(MAX) NULL;
 
+-- Add refund columns to bookings table
+ALTER TABLE bookings ADD refund_percent  INT DEFAULT 0;
+ALTER TABLE bookings ADD refund_amount   DECIMAL(12,2) DEFAULT 0;
+ALTER TABLE bookings ADD refund_status   VARCHAR(20) DEFAULT 'none';
+ALTER TABLE bookings ADD cancelled_at    DATETIME NULL;
 
-  USE fse_shaadi_go;
+USE fse_shaadi_go;
+select * from reviews
 select * from chat_messages
 select * from venues
 select * from bookings
 select * from users
+
+
