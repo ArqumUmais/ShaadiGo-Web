@@ -148,8 +148,11 @@
 
 /* Action Buttons */
 .db-card-actions {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 22px; gap: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 22px;
+  gap: 8px;
 }
 .db-btn {
   border-radius: 7px; padding: 7px 14px; font-family: 'Inter', sans-serif;
@@ -191,3 +194,59 @@
   .db-card-right  { width: 100%; text-align: left; }
   .db-card-actions { flex-direction: column; align-items: stretch; }
 }
+.db-btn-review {
+  background: linear-gradient(135deg, #D4AF37, #b8942e);
+  color: #fff; border: none; border-radius: 8px;
+  padding: 7px 14px; font-size: 0.8rem; font-weight: 600;
+  cursor: pointer; transition: opacity 0.2s;
+}
+.db-btn-review:hover { opacity: 0.88; }
+
+.db-btn-reviewed {
+  font-size: 0.8rem; color: #1a7f4b; font-weight: 600;
+  padding: 7px 0;
+}
+/* IN-PROGRESS CARD BORDER */
+.db-card.inprogress {
+  border-left: 4px solid #9b59b6;
+}
+
+/* IN-PROGRESS BANNER */
+.db-inprogress-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(135deg, rgba(123,63,160,0.08), rgba(155,89,182,0.12));
+  border-bottom: 1px solid rgba(123,63,160,0.15);
+  padding: 10px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #7b3fa0;
+  border-radius: 12px 12px 0 0;
+}
+
+/* PULSING DOT */
+.db-inprogress-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9b59b6;
+  display: inline-block;
+  flex-shrink: 0;
+  animation: pulse-ring 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(155,89,182,0.6); }
+  70%  { box-shadow: 0 0 0 8px rgba(155,89,182,0); }
+  100% { box-shadow: 0 0 0 0 rgba(155,89,182,0); }
+}
+/* REFUND BANNER */
+.db-refund-banner {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(26,127,75,0.07);
+  border-bottom: 1px solid rgba(26,127,75,0.18);
+  padding: 10px 20px;
+  font-size: 0.82rem; color: #1a7f4b;
+}
+.db-refund-banner strong { font-weight: 700; }
