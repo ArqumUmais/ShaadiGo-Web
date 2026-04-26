@@ -208,3 +208,87 @@
   .ch-window { height: 70vh; }
   .ch-info-card { display: none; }
 }
+/* PAYMENT SECTION */
+.ch-payment-section {
+  background: rgba(212,175,55,0.08);
+  border: 1px solid rgba(212,175,55,0.3);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 4px;
+}
+.ch-payment-title {
+  font-size: 0.78rem; font-weight: 700;
+  color: #4D0D0D; margin-bottom: 6px;
+}
+.ch-payment-desc {
+  font-size: 0.7rem; opacity: 0.55;
+  line-height: 1.5; margin-bottom: 10px;
+}
+.ch-payment-amount {
+  font-size: 1rem; font-weight: 700;
+  color: #4D0D0D; margin-bottom: 10px;
+}
+.ch-payment-amount span {
+  display: block; font-size: 0.68rem;
+  font-weight: 400; opacity: 0.5;
+}
+.ch-payment-btn {
+  width: 100%; padding: 9px;
+  background: linear-gradient(135deg, #4D0D0D, #7a1a1a);
+  color: #FFE0D1; border: none; border-radius: 8px;
+  font-size: 0.8rem; font-weight: 600;
+  cursor: pointer; transition: opacity 0.2s;
+  font-family: 'Inter', sans-serif;
+}
+.ch-payment-btn:hover    { opacity: 0.88; }
+.ch-payment-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ATTACH BUTTON */
+.ch-attach-btn {
+  width: 42px; height: 42px; border-radius: 10px;
+  background: rgba(212,175,55,0.15);
+  border: 1px solid rgba(212,175,55,0.35);
+  cursor: pointer; font-size: 1.1rem;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s; flex-shrink: 0;
+}
+.ch-attach-btn:hover    { background: rgba(212,175,55,0.28); }
+.ch-attach-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* IMAGE BUBBLE */
+.ch-bubble-image-wrap { display: flex; flex-direction: column; gap: 6px; }
+.ch-bubble-image-label {
+  font-size: 0.72rem; opacity: 0.7; font-weight: 600;
+}
+.ch-bubble-image {
+  max-width: 220px; max-height: 280px;
+  border-radius: 8px; object-fit: cover;
+  cursor: pointer; transition: opacity 0.2s;
+  border: 2px solid rgba(255,255,255,0.3);
+}
+.ch-bubble-image:hover { opacity: 0.88; }
+
+/* IMAGE PREVIEW LIGHTBOX */
+.ch-preview-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.ch-preview-wrap {
+  position: relative;
+  max-width: 90vw; max-height: 90vh;
+}
+.ch-preview-close {
+  position: absolute; top: -16px; right: -16px;
+  background: #fff; border: none; border-radius: 50%;
+  width: 32px; height: 32px; font-size: 0.9rem;
+  cursor: pointer; display: flex;
+  align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.ch-preview-img {
+  max-width: 100%; max-height: 90vh;
+  border-radius: 12px; object-fit: contain;
+}
