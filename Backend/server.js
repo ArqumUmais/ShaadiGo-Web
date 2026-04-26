@@ -13,8 +13,8 @@ const app  = express();
 const PORT = process.env.PORT || 5001;
 
 app.use(cors());
-app.use(express.json());
-
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // ── DB CONFIG ─────────────────────────────────────────────────────────────────
 const dbConfig = {
   server:   process.env.DB_SERVER,
@@ -121,7 +121,7 @@ app.post('/api/booking', async (req, res) => {
         OUTPUT INSERTED.booking_id
         VALUES
           (@userId, @venueId, @fname, @lname, @phone, @eventType, @guestCount,
-           @specialRequests, @eventDate, @hallPrice, @serviceFee, @totalPrice, @advancePaid, 'confirmed')`);
+           @specialRequests, @eventDate, @hallPrice, @serviceFee, @totalPrice, @advancePaid, 'pending')`);
     await pool.request()
       .input('venueId',   sql.Int,  venueId)
       .input('eventDate', sql.Date, eventDate)
@@ -237,9 +237,10 @@ app.get('/api/bookings/:userId', async (req, res) => {
     const result = await pool.request()
       .input('userId', sql.Int, req.params.userId)
       .query(`
-        SELECT b.booking_id, b.event_type, b.event_date, b.status,
+        SELECT b.booking_id, b.venue_id, b.event_type, b.event_date, b.status,
                b.hall_price, b.service_fee, b.total_price, b.advance_paid,
                b.guest_count, b.special_requests, b.created_at,
+               b.refund_percent, b.refund_amount, b.refund_status, b.cancelled_at,
                v.name AS venue_name, v.location, v.city, v.emoji
         FROM bookings b
         JOIN venues v ON v.venue_id = b.venue_id
@@ -254,6 +255,7 @@ app.get('/api/bookings/:userId', async (req, res) => {
 });
 
 // ── CANCEL BOOKING ────────────────────────────────────────────────────────────
+// ── CANCEL BOOKING ────────────────────────────────────────────────────────────
 app.patch('/api/booking/:bookingId/cancel', async (req, res) => {
   const { userId } = req.body;
   try {
@@ -261,20 +263,56 @@ app.patch('/api/booking/:bookingId/cancel', async (req, res) => {
     const check = await pool.request()
       .input('bookingId', sql.Int, req.params.bookingId)
       .input('userId',    sql.Int, userId)
-      .query(`SELECT booking_id, venue_id, event_date FROM bookings
+      .query(`SELECT booking_id, venue_id, event_date, advance_paid
+              FROM bookings
               WHERE booking_id = @bookingId AND user_id = @userId AND status != 'cancelled'`);
     if (check.recordset.length === 0)
       return res.status(404).json({ success: false, message: 'Booking not found or already cancelled.' });
-    const { venue_id, event_date } = check.recordset[0];
+
+    const { venue_id, event_date, advance_paid } = check.recordset[0];
+
+    // Calculate days until event
+    const today     = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDay  = new Date(event_date);
+    eventDay.setHours(0, 0, 0, 0);
+    const daysUntil = Math.ceil((eventDay - today) / (1000 * 60 * 60 * 24));
+
+    // Refund policy
+    let refundPercent = 0;
+    if      (daysUntil > 7)  refundPercent = 90;
+    else if (daysUntil >= 5) refundPercent = 80;
+    else if (daysUntil >= 3) refundPercent = 50;
+    else if (daysUntil >= 1) refundPercent = 30;
+    else                     refundPercent = 0;
+
+    const refundAmount = parseFloat(((advance_paid * refundPercent) / 100).toFixed(2));
+
     await pool.request()
-      .input('bookingId', sql.Int, req.params.bookingId)
-      .query(`UPDATE bookings SET status = 'cancelled' WHERE booking_id = @bookingId`);
+      .input('bookingId',     sql.Int,          req.params.bookingId)
+      .input('refundPercent', sql.Int,          refundPercent)
+      .input('refundAmount',  sql.Decimal(12,2), refundAmount)
+      .query(`UPDATE bookings SET
+                status         = 'cancelled',
+                refund_percent = @refundPercent,
+                refund_amount  = @refundAmount,
+                refund_status  = 'pending',
+                cancelled_at   = GETDATE()
+              WHERE booking_id = @bookingId`);
+
     await pool.request()
       .input('venueId',   sql.Int,  venue_id)
       .input('eventDate', sql.Date, event_date)
       .query(`DELETE FROM venue_unavailable_dates
               WHERE venue_id = @venueId AND unavailable_date = @eventDate`);
-    res.json({ success: true, message: 'Booking cancelled successfully.' });
+
+    res.json({
+      success:       true,
+      message:       'Booking cancelled successfully.',
+      refundPercent,
+      refundAmount,
+      daysUntil,
+    });
   } catch (err) {
     console.error('Cancel error:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -288,7 +326,8 @@ app.get('/api/chat/:bookingId', async (req, res) => {
     const result = await pool.request()
       .input('bookingId', sql.Int, req.params.bookingId)
       .query(`
-        SELECT m.message_id, m.sender, m.message, m.sent_at, u.username
+        SELECT m.message_id, m.sender, m.message, m.sent_at,
+               m.message_type, m.image_data, u.username
         FROM chat_messages m
         JOIN users u ON u.user_id = m.user_id
         WHERE m.booking_id = @bookingId
@@ -303,8 +342,10 @@ app.get('/api/chat/:bookingId', async (req, res) => {
 
 // ── SEND CHAT MESSAGE ─────────────────────────────────────────────────────────
 app.post('/api/chat/:bookingId', async (req, res) => {
-  const { userId, message } = req.body;
-  if (!message?.trim())
+  const { userId, message, messageType, imageData } = req.body;
+  if (messageType === 'image' && !imageData)
+    return res.status(400).json({ success: false, message: 'Image data is required.' });
+  if (messageType !== 'image' && !message?.trim())
     return res.status(400).json({ success: false, message: 'Message cannot be empty.' });
   try {
     await poolConnect;
@@ -314,20 +355,103 @@ app.post('/api/chat/:bookingId', async (req, res) => {
     if (check.recordset.length === 0)
       return res.status(403).json({ success: false, message: 'Booking not found.' });
     const insert = await pool.request()
-      .input('bookingId', sql.Int,               req.params.bookingId)
-      .input('userId',    sql.Int,               userId)
-      .input('sender',    sql.VarChar,           'customer')
-      .input('message',   sql.NVarChar(sql.MAX), message.trim())
-      .query(`INSERT INTO chat_messages (booking_id, user_id, sender, message)
+      .input('bookingId',   sql.Int,               req.params.bookingId)
+      .input('userId',      sql.Int,               userId)
+      .input('sender',      sql.VarChar,           'customer')
+      .input('message',     sql.NVarChar(sql.MAX), messageType === 'image' ? '📷 Payment Screenshot' : message.trim())
+      .input('messageType', sql.VarChar,           messageType || 'text')
+      .input('imageData',   sql.NVarChar(sql.MAX), imageData || null)
+      .query(`INSERT INTO chat_messages (booking_id, user_id, sender, message, message_type, image_data)
               OUTPUT INSERTED.message_id, INSERTED.sent_at
-              VALUES (@bookingId, @userId, @sender, @message)`);
+              VALUES (@bookingId, @userId, @sender, @message, @messageType, @imageData)`);
+    
+              // If image sent, confirm the booking
+  if (messageType === 'image') {
+  await pool.request()
+    .input('bookingId', sql.Int, req.params.bookingId)
+    .query(`UPDATE bookings SET status = 'confirmed' WHERE booking_id = @bookingId`);
+  }
     res.json({
       success:    true,
       message_id: insert.recordset[0].message_id,
-      sent_at:    insert.recordset[0].sent_at
+      sent_at:    insert.recordset[0].sent_at,
     });
   } catch (err) {
     console.error('Chat send error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── SUBMIT REVIEW ─────────────────────────────────────────────────────────────
+app.post('/api/review', async (req, res) => {
+  const { bookingId, userId, venueId, rating, reviewText } = req.body;
+  if (!bookingId || !userId || !venueId || !rating)
+    return res.status(400).json({ success: false, message: 'Missing required fields.' });
+  try {
+    await poolConnect;
+    const check = await pool.request()
+      .input('bookingId', sql.Int, bookingId)
+      .input('userId',    sql.Int, userId)
+      .input('venueId',   sql.Int, venueId)
+      .query(`SELECT booking_id FROM bookings
+              WHERE booking_id = @bookingId AND user_id = @userId
+              AND venue_id = @venueId AND status = 'confirmed'
+              AND event_date < CAST(GETDATE() AS DATE)`);
+    if (check.recordset.length === 0)
+      return res.status(403).json({ success: false, message: 'Not eligible to review this booking.' });
+    await pool.request()
+      .input('bookingId',  sql.Int,               bookingId)
+      .input('userId',     sql.Int,               userId)
+      .input('venueId',    sql.Int,               venueId)
+      .input('rating',     sql.Decimal(2,1),      rating)
+      .input('reviewText', sql.NVarChar(sql.MAX), reviewText || null)
+      .query(`INSERT INTO reviews (booking_id, user_id, venue_id, rating, review_text)
+              VALUES (@bookingId, @userId, @venueId, @rating, @reviewText)`);
+    await pool.request()
+      .input('venueId', sql.Int, venueId)
+      .query(`UPDATE venues SET
+                rating       = (SELECT ROUND(AVG(CAST(rating AS FLOAT)), 1) FROM reviews WHERE venue_id = @venueId),
+                review_count = (SELECT COUNT(*) FROM reviews WHERE venue_id = @venueId)
+              WHERE venue_id = @venueId`);
+    res.json({ success: true, message: 'Review submitted successfully!' });
+  } catch (err) {
+    if (err.message?.includes('uq_one_review_per_booking'))
+      return res.status(409).json({ success: false, message: 'You have already reviewed this booking.' });
+    console.error('Review error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── GET REVIEWS FOR A VENUE ───────────────────────────────────────────────────
+app.get('/api/reviews/:venueId', async (req, res) => {
+  try {
+    await poolConnect;
+    const result = await pool.request()
+      .input('venueId', sql.Int, req.params.venueId)
+      .query(`SELECT r.review_id, r.rating, r.review_text, r.created_at,
+                     u.username, b.event_type
+              FROM reviews r
+              JOIN users u    ON u.user_id    = r.user_id
+              JOIN bookings b ON b.booking_id = r.booking_id
+              WHERE r.venue_id = @venueId
+              ORDER BY r.created_at DESC`);
+    res.json({ success: true, reviews: result.recordset });
+  } catch (err) {
+    console.error('Reviews fetch error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── CHECK IF BOOKING ALREADY REVIEWED ────────────────────────────────────────
+app.get('/api/review/check/:bookingId', async (req, res) => {
+  try {
+    await poolConnect;
+    const already = await pool.request()
+      .input('bookingId', sql.Int, req.params.bookingId)
+      .query(`SELECT review_id FROM reviews WHERE booking_id = @bookingId`);
+    res.json({ success: true, reviewed: already.recordset.length > 0 });
+  } catch (err) {
+    console.error('Review check error:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
@@ -347,7 +471,10 @@ async function startServer() {
       console.log('   GET  /api/bookings/:userId');
       console.log('   PATCH /api/booking/:bookingId/cancel');
       console.log('   GET  /api/chat/:bookingId');
-      console.log('   POST /api/chat/:bookingId\n');
+      console.log('   POST /api/chat/:bookingId');
+      console.log('   POST /api/review');
+      console.log('   GET  /api/reviews/:venueId');
+      console.log('   GET  /api/review/check/:bookingId\n');
     });
     server.on('error', err => {
       if (err.code === 'EADDRINUSE') {
