@@ -9,71 +9,60 @@ const monthNames = ['January','February','March','April','May','June',
   'July','August','September','October','November','December'];
 
 function Booking() {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const venue = location.state?.venue;
+  const location     = useLocation();
+  const navigate     = useNavigate();
+  const venue        = location.state?.venue;
   const loggedInUser = JSON.parse(localStorage.getItem('shaadigo_user') || 'null');
 
   const today = new Date();
-  const [viewYear, setViewYear]       = useState(today.getFullYear());
-  const [viewMonth, setViewMonth]     = useState(today.getMonth());
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [unavailableDates, setUnavailableDates] = useState([]); // "YYYY-MM-DD" strings
-  const [calLoading, setCalLoading]   = useState(false);
-  const [message, setMessage]         = useState({ text: '', type: '' });
+  const [viewYear, setViewYear]           = useState(today.getFullYear());
+  const [viewMonth, setViewMonth]         = useState(today.getMonth());
+  const [selectedDate, setSelectedDate]   = useState(null);
+  const [unavailableDates, setUnavailableDates] = useState([]);
+  const [calLoading, setCalLoading]       = useState(false);
+  const [message, setMessage]             = useState({ text: '', type: '' });
   const [form, setForm] = useState({
     fname: '', lname: '', phone: '',
     eventType: '', guests: '', special: ''
   });
 
-  // Resolve venue id — handles both hardcoded (id) and DB (venue_id)
   const venueId = venue?.venue_id ?? venue?.id;
 
+  // price_per_guest from DB (renamed from price_per_event)
+  const pricePerGuest = Number(venue?.price_per_guest ?? venue?.price_per_guest ?? 0);
+
+  // Live calculation — updates as guests changes
+  const guestCount = parseInt(form.guests) || 0;
+  const hallPrice  = Math.round(pricePerGuest * guestCount);
+  const serviceFee = Math.round(hallPrice * 0.05);
+  const total      = hallPrice + serviceFee;
+
   useEffect(() => {
-    if (!venue)         navigate('/venues');
-    if (!loggedInUser)  { alert('Please log in first.'); navigate('/'); }
+    if (!venue)        navigate('/venues');
+    if (!loggedInUser) { alert('Please log in first.'); navigate('/'); }
   }, []);
 
-  // ── Fetch unavailable dates whenever venueId changes ──────────────────────
   useEffect(() => {
     if (!venueId) return;
     setCalLoading(true);
     fetch(`http://localhost:5001/api/booking/unavailable/${venueId}`)
       .then(r => r.json())
-      .then(data => {
-        if (data.success) setUnavailableDates(data.dates); // ["2025-08-05", ...]
-      })
-      .catch(() => {}) // silently fail — calendar still works, just no blocked dates
+      .then(data => { if (data.success) setUnavailableDates(data.dates); })
+      .catch(() => {})
       .finally(() => setCalLoading(false));
   }, [venueId]);
 
   if (!venue || !loggedInUser) return null;
 
-  // Use price_per_event (DB) or priceNum (hardcoded) — whichever exists
-  const hallPrice  = Number(venue.price_per_event ?? venue.priceNum ?? 0);
-  const serviceFee = Math.round(hallPrice * 0.05);
-  const total      = hallPrice + serviceFee;
-
   const handleChange = (e) => setForm({ ...form, [e.target.id]: e.target.value });
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   const toDateStr = (y, m, d) =>
     `${y}-${String(m + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
 
-  const isPast = (d) =>
-    new Date(viewYear, viewMonth, d) < new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-  const isUnavailable = (d) =>
-    unavailableDates.includes(toDateStr(viewYear, viewMonth, d));
-
-  const isToday = (d) =>
-    d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
-
-  const isSelected = (d) =>
-    selectedDate !== null &&
-    selectedDate.d === d &&
-    selectedDate.m === viewMonth &&
-    selectedDate.y === viewYear;
+  const isPast        = (d) => new Date(viewYear, viewMonth, d) < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const isUnavailable = (d) => unavailableDates.includes(toDateStr(viewYear, viewMonth, d));
+  const isToday       = (d) => d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
+  const isSelected    = (d) => selectedDate !== null && selectedDate.d === d && selectedDate.m === viewMonth && selectedDate.y === viewYear;
 
   const handleDayClick = (d) => {
     if (isPast(d) || isUnavailable(d)) return;
@@ -99,19 +88,21 @@ function Booking() {
     ? toDateStr(selectedDate.y, selectedDate.m, selectedDate.d)
     : null;
 
-  // ── Calendar grid ─────────────────────────────────────────────────────────
   const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const calDays = [];
   for (let i = 0; i < firstDay; i++) calDays.push(null);
   for (let d = 1; d <= daysInMonth; d++) calDays.push(d);
 
-  // ── Submit ────────────────────────────────────────────────────────────────
   const handleConfirm = async () => {
     if (!eventDateISO)
       return setMessage({ text: 'Please select a date.', type: 'error' });
     if (!form.fname || !form.lname || !form.phone || !form.eventType)
       return setMessage({ text: 'Please fill in all required fields.', type: 'error' });
+    if (!form.guests || guestCount < 1)
+      return setMessage({ text: 'Please enter the number of expected guests.', type: 'error' });
+    if (guestCount > venue.capacity)
+      return setMessage({ text: `Guest count exceeds venue capacity of ${venue.capacity.toLocaleString()}.`, type: 'error' });
 
     const payload = {
       userId:      loggedInUser.user_id,
@@ -119,7 +110,7 @@ function Booking() {
       lname:       form.lname,
       phone:       form.phone,
       eventType:   form.eventType,
-      guests:      form.guests,
+      guests:      guestCount,
       special:     form.special,
       venueId,
       eventDate:   eventDateISO,
@@ -129,7 +120,6 @@ function Booking() {
     try {
       const response = await axios.post('http://localhost:5001/api/booking', payload);
       if (response.data.success) {
-        // Block this date locally so calendar updates instantly
         setUnavailableDates(prev => [...prev, eventDateISO]);
         setSelectedDate(null);
         setMessage({ text: '🎉 Booking confirmed! Redirecting…', type: 'success' });
@@ -235,11 +225,22 @@ function Booking() {
                 </div>
               </div>
               <div className="bk-field">
-                <label htmlFor="guests">Expected Guests</label>
+                <label htmlFor="guests">
+                  Expected Guests
+                  <span style={{fontSize:'0.75rem', color:'#888', marginLeft:6}}>
+                    (max {Number(venue.capacity).toLocaleString()})
+                  </span>
+                </label>
                 <div className="bk-input-wrap">
                   <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5" r="2" stroke="#4D0D0D" strokeWidth="1.3"/><path d="M1 13c0-2 2-3.5 5-3.5" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/><circle cx="11" cy="6" r="1.8" stroke="#4D0D0D" strokeWidth="1.3"/><path d="M8.5 13c0-2 1.5-3 2.5-3s2.5 1 2.5 3" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/></svg>
-                  <input type="number" id="guests" placeholder="e.g. 500" min="1" value={form.guests} onChange={handleChange}/>
+                  <input type="number" id="guests" placeholder="e.g. 300" min="1" max={venue.capacity} value={form.guests} onChange={handleChange}/>
                 </div>
+                {/* Live per-guest rate hint */}
+                {pricePerGuest > 0 && (
+                  <div style={{fontSize:'0.75rem', color:'#888', marginTop:4}}>
+                    Rs {pricePerGuest.toLocaleString()} per guest
+                  </div>
+                )}
               </div>
             </div>
 
@@ -284,7 +285,6 @@ function Booking() {
                 Availability Calendar
               </h3>
 
-              {/* Loading indicator */}
               {calLoading && (
                 <div style={{textAlign:'center', fontSize:'0.78rem', opacity:0.5, padding:'8px 0 4px'}}>
                   Loading availability…
@@ -303,25 +303,18 @@ function Booking() {
                 ))}
                 {calDays.map((d, i) => {
                   if (!d) return <div key={`e-${i}`} className="bk-cal-day empty"></div>;
-
-                  const past      = isPast(d);
-                  const booked    = isUnavailable(d);
-                  const sel       = isSelected(d);
-                  const tod       = isToday(d);
-
+                  const past   = isPast(d);
+                  const booked = isUnavailable(d);
+                  const sel    = isSelected(d);
+                  const tod    = isToday(d);
                   let cls = 'bk-cal-day';
                   if (sel)         cls += ' selected';
                   else if (past)   cls += ' past';
                   else if (booked) cls += ' booked';
                   else if (tod)    cls += ' today';
-
                   return (
-                    <div
-                      key={d}
-                      className={cls}
-                      onClick={() => handleDayClick(d)}
-                      title={booked ? 'Already booked' : past ? 'Past date' : ''}
-                    >
+                    <div key={d} className={cls} onClick={() => handleDayClick(d)}
+                      title={booked ? 'Already booked' : past ? 'Past date' : ''}>
                       {d}
                     </div>
                   );
@@ -329,21 +322,12 @@ function Booking() {
               </div>
 
               <div className="bk-cal-legend">
-                <div className="bk-legend-item">
-                  <div className="bk-legend-dot" style={{background:'#4D0D0D'}}></div>Selected
-                </div>
-                <div className="bk-legend-item">
-                  <div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.2)'}}></div>Booked
-                </div>
-                <div className="bk-legend-item">
-                  <div className="bk-legend-dot" style={{border:'1px solid #D4AF37',background:'transparent'}}></div>Today
-                </div>
-                <div className="bk-legend-item">
-                  <div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.08)'}}></div>Past
-                </div>
+                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'#4D0D0D'}}></div>Selected</div>
+                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.2)'}}></div>Booked</div>
+                <div className="bk-legend-item"><div className="bk-legend-dot" style={{border:'1px solid #D4AF37',background:'transparent'}}></div>Today</div>
+                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.08)'}}></div>Past</div>
               </div>
 
-              {/* Selected date display */}
               {selectedDate && (
                 <div style={{
                   marginTop:'12px', padding:'8px 12px',
@@ -355,7 +339,7 @@ function Booking() {
               )}
             </div>
 
-            {/* BOOKING SUMMARY */}
+            {/* BOOKING SUMMARY — live pricing */}
             <div className="bk-sidebar-card">
               <h3>
                 <svg viewBox="0 0 16 16" fill="none" width="15" height="15">
@@ -370,6 +354,14 @@ function Booking() {
                 <span className="bk-val">Up to {Number(venue.capacity).toLocaleString()} guests</span>
               </div>
               <div className="bk-summary-row">
+                <span className="bk-lbl">Price / Guest</span>
+                <span className="bk-val">PKR {pricePerGuest.toLocaleString()}</span>
+              </div>
+              <div className="bk-summary-row">
+                <span className="bk-lbl">Guests</span>
+                <span className="bk-val">{guestCount > 0 ? guestCount.toLocaleString() : '—'}</span>
+              </div>
+              <div className="bk-summary-row">
                 <span className="bk-lbl">Date</span>
                 <span className="bk-val bk-hi">{selectedDateStr}</span>
               </div>
@@ -380,16 +372,22 @@ function Booking() {
               <div className="bk-summary-divider"></div>
               <div className="bk-summary-row">
                 <span className="bk-lbl">Hall Price</span>
-                <span className="bk-val">PKR {hallPrice.toLocaleString('en-IN')}</span>
+                <span className="bk-val">
+                  {guestCount > 0
+                    ? `PKR ${hallPrice.toLocaleString('en-IN')}`
+                    : <span style={{color:'#aaa', fontSize:'0.8rem'}}>Enter guests to calculate</span>}
+                </span>
               </div>
               <div className="bk-summary-row">
                 <span className="bk-lbl">Service Fee (5%)</span>
-                <span className="bk-val">PKR {serviceFee.toLocaleString()}</span>
+                <span className="bk-val">{guestCount > 0 ? `PKR ${serviceFee.toLocaleString()}` : '—'}</span>
               </div>
               <div className="bk-summary-divider"></div>
               <div className="bk-summary-total">
                 <span className="bk-t-label">Total</span>
-                <span className="bk-t-price">PKR {total.toLocaleString()}</span>
+                <span className="bk-t-price">
+                  {guestCount > 0 ? `PKR ${total.toLocaleString()}` : '—'}
+                </span>
               </div>
               <button className="bk-btn-confirm" onClick={handleConfirm}>Confirm Booking</button>
               <div className="bk-secure-note">
