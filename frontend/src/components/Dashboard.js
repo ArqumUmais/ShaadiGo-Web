@@ -3,8 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import Header from './Header';
 import Footer from './Footer';
 import '../style/Dashboard.css';
+import { IconVenue } from './Icons';
 import ReviewModal from './ReviewModal';
 import CancelModal from './CancelModal';
+
 const statusConfig = {
   confirmed:  { label: 'Confirmed',   color: '#1a7f4b', bg: 'rgba(26,127,75,0.1)',   dot: '#1a7f4b' },
   pending:    { label: 'Pending',     color: '#b8942e', bg: 'rgba(212,175,55,0.15)', dot: '#D4AF37' },
@@ -22,14 +24,15 @@ function StatusBadge({ status }) {
   );
 }
 
-function BookingCard({ booking, onCancel }) {
+function BookingCard({ booking, onCancel, onRefundConfirmed }) {
   const navigate = useNavigate();
-  const [expanded, setExpanded]       = useState(false);
-  const [showReview, setShowReview]   = useState(false);
-  const [showCancel, setShowCancel]   = useState(false);
-  const [reviewed, setReviewed]       = useState(false);
-  const [reviewDone, setReviewDone]   = useState(false);
-  const [localBooking, setLocalBooking] = useState(booking);
+  const [expanded, setExpanded]     = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [showCancel, setShowCancel] = useState(false);
+  const [reviewed, setReviewed]     = useState(false);
+  const [reviewDone, setReviewDone] = useState(false);
+  const [refundLoading, setRefundLoading] = useState(false);
+  const [localBooking, setLocalBooking]   = useState(booking);
 
   const eventDate = new Date(localBooking.event_date);
   const createdAt = new Date(localBooking.created_at);
@@ -43,6 +46,12 @@ function BookingCard({ booking, onCancel }) {
   const isPast    = eventDay < today;
   const canCancel = localBooking.status === 'confirmed' && !isPast && !isToday;
   const canReview = localBooking.status === 'confirmed' && isPast;
+
+  // Show refund button only when cancelled, has a refund amount, and status is still 'pending'
+  const canConfirmRefund =
+    localBooking.status === 'cancelled' &&
+    Number(localBooking.refund_amount) > 0 &&
+    localBooking.refund_status === 'pending';
 
   const displayStatus = (localBooking.status === 'confirmed' && isToday)
     ? 'inprogress'
@@ -58,6 +67,33 @@ function BookingCard({ booking, onCancel }) {
       .then(d => { if (d.reviewed) setReviewed(true); })
       .catch(() => {});
   }, [localBooking.booking_id, canReview]);
+
+  const handleConfirmRefund = async () => {
+    setRefundLoading(true);
+    try {
+      const user = JSON.parse(localStorage.getItem('shaadigo_user') || '{}');
+      const res  = await fetch(
+        `http://localhost:5001/api/booking/${localBooking.booking_id}/refund-received`,
+        {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ userId: user.user_id }),
+        }
+      );
+      const data = await res.json();
+      if (data.success) {
+        const updated = { ...localBooking, refund_status: 'received' };
+        setLocalBooking(updated);
+        onRefundConfirmed(localBooking.booking_id, updated);
+      } else {
+        alert(data.message || 'Failed to confirm refund.');
+      }
+    } catch {
+      alert('Could not connect to server.');
+    } finally {
+      setRefundLoading(false);
+    }
+  };
 
   return (
     <>
@@ -89,16 +125,20 @@ function BookingCard({ booking, onCancel }) {
           </div>
         )}
 
-        {/* REFUND BANNER — shown after cancellation */}
-        {localBooking.status === 'cancelled' && localBooking.refund_amount > 0 && (
+        {/* REFUND BANNER */}
+        {localBooking.status === 'cancelled' && Number(localBooking.refund_amount) > 0 && (
           <div className="db-refund-banner">
             <span>💰</span>
-            Refund of <strong>PKR {Number(localBooking.refund_amount).toLocaleString('en-IN')}</strong> ({localBooking.refund_percent}%) is pending processing.
+            {localBooking.refund_status === 'received' ? (
+              <>Refund of <strong>PKR {Number(localBooking.refund_amount).toLocaleString('en-IN')}</strong> ({localBooking.refund_percent}%) — <span style={{color:'#1a7f4b', fontWeight:700}}>✅ Received</span></>
+            ) : (
+              <>Refund of <strong>PKR {Number(localBooking.refund_amount).toLocaleString('en-IN')}</strong> ({localBooking.refund_percent}%) is pending processing.</>
+            )}
           </div>
         )}
 
         <div className="db-card-header">
-          <div className="db-card-emoji">{localBooking.emoji || '🏛️'}</div>
+          <div className="db-card-emoji"><IconVenue size={36} color="#4D0D0D" /></div>
           <div className="db-card-info">
             <div className="db-card-venue">{localBooking.venue_name}</div>
             <div className="db-card-location">
@@ -157,7 +197,7 @@ function BookingCard({ booking, onCancel }) {
                 {createdAt.toLocaleDateString('en-PK', { day:'numeric', month:'long', year:'numeric' })}
               </span>
             </div>
-            {localBooking.status === 'cancelled' && localBooking.refund_amount > 0 && (
+            {localBooking.status === 'cancelled' && Number(localBooking.refund_amount) > 0 && (
               <>
                 <div className="db-detail-row">
                   <span className="db-detail-label">Refund Amount</span>
@@ -167,8 +207,11 @@ function BookingCard({ booking, onCancel }) {
                 </div>
                 <div className="db-detail-row">
                   <span className="db-detail-label">Refund Status</span>
-                  <span className="db-detail-val" style={{color:'#b8942e', textTransform:'capitalize'}}>
-                    {localBooking.refund_status}
+                  <span className="db-detail-val" style={{
+                    color: localBooking.refund_status === 'received' ? '#1a7f4b' : '#b8942e',
+                    textTransform: 'capitalize', fontWeight: 600
+                  }}>
+                    {localBooking.refund_status === 'received' ? '✅ Received' : '⏳ ' + localBooking.refund_status}
                   </span>
                 </div>
               </>
@@ -182,40 +225,51 @@ function BookingCard({ booking, onCancel }) {
           </div>
         )}
 
-      <div className="db-card-actions">
-  <button className="db-btn db-btn-ghost" onClick={() => setExpanded(e => !e)}>
-    {expanded ? '▲ Less Details' : '▼ More Details'}
-  </button>
+        <div className="db-card-actions">
+          <button className="db-btn db-btn-ghost" onClick={() => setExpanded(e => !e)}>
+            {expanded ? '▲ Less Details' : '▼ More Details'}
+          </button>
 
-  {(localBooking.status === 'confirmed' || localBooking.status === 'pending') && (
-    <button className="db-btn db-btn-chat"
-      onClick={() => navigate('/chat', { state: { booking: localBooking } })}>
-      💬 Chat with Owner
-    </button>
-  )}
+          {(localBooking.status === 'confirmed' || localBooking.status === 'pending') && (
+            <button className="db-btn db-btn-chat"
+              onClick={() => navigate('/chat', { state: { booking: localBooking } })}>
+              💬 Chat with Owner
+            </button>
+          )}
 
-  <div style={{ display: 'flex', gap: '8px' }}>
-    {canCancel && (
-      <button className="db-btn db-btn-cancel" onClick={() => setShowCancel(true)}>
-        Cancel Booking
-      </button>
-    )}
-    {canReview && (
-      reviewed || reviewDone ? (
-        <span className="db-btn-reviewed">✅ Reviewed</span>
-      ) : (
-        <button className="db-btn db-btn-review" onClick={() => setShowReview(true)}>
-          ⭐ Leave a Review
-        </button>
-      )
-    )}
-  </div>
-</div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {canCancel && (
+              <button className="db-btn db-btn-cancel" onClick={() => setShowCancel(true)}>
+                Cancel Booking
+              </button>
+            )}
+            {canConfirmRefund && (
+              <button
+                className="db-btn db-btn-review"
+                style={{ background: 'rgba(26,127,75,0.12)', color: '#1a7f4b', border: '1px solid rgba(26,127,75,0.3)' }}
+                onClick={handleConfirmRefund}
+                disabled={refundLoading}
+              >
+                {refundLoading ? '⏳ Confirming…' : '✅ Confirm Refund Received'}
+              </button>
+            )}
+            {canReview && (
+              reviewed || reviewDone ? (
+                <span className="db-btn-reviewed">✅ Reviewed</span>
+              ) : (
+                <button className="db-btn db-btn-review" onClick={() => setShowReview(true)}>
+                  ⭐ Leave a Review
+                </button>
+              )
+            )}
+          </div>
+        </div>
 
       </div>
     </>
   );
 }
+
 function Dashboard() {
   const navigate     = useNavigate();
   const loggedInUser = JSON.parse(localStorage.getItem('shaadigo_user') || 'null');
@@ -243,16 +297,21 @@ function Dashboard() {
     }
   };
 
- 
-    const handleCancel = (bookingId, updatedBooking) => {
-  setBookings(prev =>
-    prev.map(b => b.booking_id === bookingId ? { ...updatedBooking } : b)
-  );
-};
+  const handleCancel = (bookingId, updatedBooking) => {
+    setBookings(prev =>
+      prev.map(b => b.booking_id === bookingId ? { ...updatedBooking } : b)
+    );
+  };
+
+  const handleRefundConfirmed = (bookingId, updatedBooking) => {
+    setBookings(prev =>
+      prev.map(b => b.booking_id === bookingId ? { ...updatedBooking } : b)
+    );
+  };
 
   if (!loggedInUser) return null;
 
-  const today    = new Date();
+  const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   const getDisplayStatus = (b) => {
@@ -292,7 +351,6 @@ function Dashboard() {
         </div>
         <div className="db-gold-divider"></div>
 
-        {/* SUMMARY CARDS */}
         <div className="db-summary-grid">
           <div className="db-summary-card">
             <div className="db-summary-icon">📋</div>
@@ -321,7 +379,6 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* FILTER TABS */}
         <div className="db-filter-tabs">
           {['all','confirmed','inprogress','cancelled'].map(s => (
             <button
@@ -346,7 +403,7 @@ function Dashboard() {
 
         {!loading && !error && filtered.length === 0 && (
           <div className="db-empty">
-            <div className="db-empty-icon">🏛️</div>
+            <div className="db-empty-icon"><IconVenue size={56} color="#4D0D0D" /></div>
             <div className="db-empty-title">No bookings yet</div>
             <div className="db-empty-sub">Find your perfect venue and make your first booking!</div>
             <button className="db-btn-new" onClick={() => navigate('/venues')}>Browse Venues</button>
@@ -356,7 +413,12 @@ function Dashboard() {
         {!loading && !error && (
           <div className="db-cards-list">
             {filtered.map(b => (
-              <BookingCard key={b.booking_id} booking={b} onCancel={handleCancel} />
+              <BookingCard
+                key={b.booking_id}
+                booking={b}
+                onCancel={handleCancel}
+                onRefundConfirmed={handleRefundConfirmed}
+              />
             ))}
           </div>
         )}
