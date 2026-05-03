@@ -10,10 +10,20 @@ import VenueDetail from './components/Venuedetail';
 import Contact from './components/Contact';
 import Dashboard from './components/Dashboard';
 import AboutUs from './components/AboutUs';
-
 import Chat from './components/Chat';
 
+// Owner Portal
+import OwnerDashboard from './components/OwnerDashboard';
+import OwnerVenues    from './components/OwnerVenues';
+import OwnerChats     from './components/OwnerChats';
+
 import './App.css';
+
+// Route guard: redirect non-owners away from owner pages
+function OwnerRoute({ element }) {
+    const user = JSON.parse(localStorage.getItem('shaadigo_user') || '{}');
+    return user?.role === 'owner' ? element : <Navigate to="/" replace />;
+}
 
 function HomePage() {
     return (
@@ -33,20 +43,25 @@ function App() {
     return (
         <BrowserRouter>
             <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/venues" element={<VenueSelection />} />
-                <Route path="/venue-detail" element={<VenueDetail />} />
-                <Route path="/booking" element={<Booking />} />
-                <Route path="/contact" element={<Contact />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="*" element={<Navigate to="/" />} />
-                <Route path="/chat" element={<Chat />} />
-                <Route path="/about" element={<AboutUs />} />
+                {/* Customer routes */}
+                <Route path="/"              element={<HomePage />} />
+                <Route path="/venues"        element={<VenueSelection />} />
+                <Route path="/venue-detail"  element={<VenueDetail />} />
+                <Route path="/booking"       element={<Booking />} />
+                <Route path="/contact"       element={<Contact />} />
+                <Route path="/dashboard"     element={<Dashboard />} />
+                <Route path="/chat"          element={<Chat />} />
+                <Route path="/about"         element={<AboutUs />} />
 
+                {/* Owner portal routes */}
+                <Route path="/owner/dashboard" element={<OwnerRoute element={<OwnerDashboard />} />} />
+                <Route path="/owner/venues"    element={<OwnerRoute element={<OwnerVenues />} />} />
+                <Route path="/owner/chats"     element={<OwnerRoute element={<OwnerChats />} />} />
+
+                <Route path="*" element={<Navigate to="/" />} />
             </Routes>
         </BrowserRouter>
     );
 }
 
 export default App;
-
