@@ -1,15 +1,3 @@
--- 1. Create the login
-CREATE LOGIN shaadigo_username WITH PASSWORD = 'Shaadi123!';
-
--- 2. Create the user in your database
-USE fse_shaadi_go;
-CREATE USER shaadigo_username FOR LOGIN shaadigo_username;
-
--- 3. Give it full access
-ALTER ROLE db_owner ADD MEMBER shaadigo_username;
-
-
-
 -- Users
 CREATE TABLE users (
   user_id       INT IDENTITY(1,1) PRIMARY KEY,
@@ -125,21 +113,169 @@ VALUES
   ('Al-Noor Grand Hall',      'Karachi',   'Gulshan, Karachi',  900,  520000, 4.7,  89, 'Timeless elegance meets warm hospitality in this iconic Karachi venue, perfect for both intimate and grand celebrations.', '🕌'),
   ('Serene Garden Marquee',   'Islamabad', 'E-11, Islamabad',   500,  280000, 4.5,  42, 'An open-air paradise surrounded by manicured gardens, fairy lights and mountain backdrop views for an unforgettable evening.', '🏰');
 
--- Add image support to chat_messages
-ALTER TABLE chat_messages ADD message_type VARCHAR(10) DEFAULT 'text';
-ALTER TABLE chat_messages ADD image_data   NVARCHAR(MAX) NULL;
-
 -- Add refund columns to bookings table
 ALTER TABLE bookings ADD refund_percent  INT DEFAULT 0;
 ALTER TABLE bookings ADD refund_amount   DECIMAL(12,2) DEFAULT 0;
 ALTER TABLE bookings ADD refund_status   VARCHAR(20) DEFAULT 'none';
 ALTER TABLE bookings ADD cancelled_at    DATETIME NULL;
 
+
+-- ═══════════════════════════════════════════════════════════════
+--  OWNER PORTAL
+-- ═══════════════════════════════════════════════════════════════
+
+-- 1. Add role column to users table (only if not already present)
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='users' AND COLUMN_NAME='role')
+BEGIN
+    ALTER TABLE users ADD role VARCHAR(10) NOT NULL DEFAULT 'customer'
+      CONSTRAINT chk_user_role CHECK (role IN ('customer','owner'));
+END
+
+-- 2. Link venues to an owner (only if not already present)
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='venues' AND COLUMN_NAME='owner_id')
+BEGIN
+    ALTER TABLE venues ADD owner_id INT NULL
+      CONSTRAINT fk_venue_owner FOREIGN KEY (owner_id) REFERENCES users(user_id);
+END
+
+-- 3. Allow owner to reply in chat (sender already allows 'owner')
+--    message_type + image_data columns (add only if not already present)
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='chat_messages' AND COLUMN_NAME='message_type')
+    ALTER TABLE chat_messages ADD message_type VARCHAR(10) NOT NULL DEFAULT 'text';
+
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='chat_messages' AND COLUMN_NAME='image_data')
+    ALTER TABLE chat_messages ADD image_data NVARCHAR(MAX) NULL;
+
+
+
+-- 5. Refund columns on bookings (add if not present)
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='bookings' AND COLUMN_NAME='refund_percent')
+  ALTER TABLE bookings ADD refund_percent INT NULL;
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='bookings' AND COLUMN_NAME='refund_amount')
+  ALTER TABLE bookings ADD refund_amount  DECIMAL(12,2) NULL;
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='bookings' AND COLUMN_NAME='refund_status')
+  ALTER TABLE bookings ADD refund_status  VARCHAR(20) NULL;
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='bookings' AND COLUMN_NAME='cancelled_at')
+  ALTER TABLE bookings ADD cancelled_at   DATETIME NULL;
+
+
+
+-- ═══════════════════════════════════════════════════════════════
+--  PATCH: price_per_guest + refund confirmation
+-- ═══════════════════════════════════════════════════════════════
+
+-- 1. Rename price_per_event to price_per_guest in venues
+EXEC sp_rename 'venues.price_per_event', 'price_per_guest', 'COLUMN';
+
+
+
+-- 3. Recalculate existing venue prices
+
+  UPDATE venues SET price_per_guest = ROUND(price_per_guest / capacity, 0);
+
+
+
+
+-- ═══════════════════════════════════════════════════════════════
+--   Remove image_data and message_type from chat_messages
+-- ═══════════════════════════════════════════════════════════════
+
 USE fse_shaadi_go;
-select * from reviews
-select * from chat_messages
+
+-- Drop image_data column
+IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_NAME='chat_messages' AND COLUMN_NAME='image_data')
+BEGIN
+    ALTER TABLE chat_messages DROP COLUMN image_data;
+    PRINT 'image_data column dropped';
+END
+
+-- Drop message_type column
+IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS 
+           WHERE TABLE_NAME='chat_messages' AND COLUMN_NAME='message_type')
+BEGIN
+    -- Must drop default constraint first if one exists
+    DECLARE @constraint NVARCHAR(200);
+    SELECT @constraint = dc.name
+    FROM sys.default_constraints dc
+    JOIN sys.columns c ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
+    JOIN sys.tables t  ON c.object_id = t.object_id
+    WHERE t.name = 'chat_messages' AND c.name = 'message_type';
+
+    IF @constraint IS NOT NULL
+        EXEC('ALTER TABLE chat_messages DROP CONSTRAINT ' + @constraint);
+
+    ALTER TABLE chat_messages DROP COLUMN message_type;
+    PRINT 'message_type column dropped';
+END
+
+
+USE fse_shaadi_go;
+
+SELECT user_id, username, role FROM users;
+
+-- Assign ALL venues to the owner userUPDATE venues
+SET owner_id = (
+    SELECT TOP 1 user_id 
+    FROM users 
+    WHERE role = 'owner'
+)
+WHERE owner_id IS NULL OR owner_id = 0;
+
+
+USE fse_shaadi_go;
+
+-- Convert flat prices to per-guest prices (round to nearest 100)
+
+UPDATE venues SET price_per_guest = ROUND(price_per_guest / capacity, -2)
+WHERE price_per_guest > 1000 AND capacity > 0;
+-- The condition price_per_guest > 1000 ensures we only convert venues
+
+
+
+
+
+-- Set correct per-guest prices directly based on original flat prices / capacity
+UPDATE venues SET price_per_guest = 600  WHERE venue_id = 1;  -- Pearl Continental: 450000/800 = 562 → 600
+UPDATE venues SET price_per_guest = 500  WHERE venue_id = 2;  -- Royal Banquet: 600000/1200 = 500
+UPDATE venues SET price_per_guest = 600  WHERE venue_id = 3;  -- Margalla Majestic: 380000/600 = 633 → 600
+UPDATE venues SET price_per_guest = 300  WHERE venue_id = 4;  -- Golden Marquee: 320000/1000 = 320 → 300
+UPDATE venues SET price_per_guest = 600  WHERE venue_id = 5;  -- Al-Noor Grand: 520000/900 = 578 → 600
+UPDATE venues SET price_per_guest = 600  WHERE venue_id = 6;  -- Serene Garden: 280000/500 = 560 → 600
+
+-- For owner-added venues with 0 price, set a default or leave for owner to update
+-- FAST Hall (venue_id=7): set 0 means owner never set it — skip or set manually
+-- Gorilla (venue_id=8): already has 3.00 — seems wrong, set a reasonable value
+UPDATE venues SET price_per_guest = 2500 WHERE venue_id = 8 AND price_per_guest < 100;
+UPDATE venues SET price_per_guest = 2500 WHERE venue_id = 9 AND price_per_guest = 0;
+UPDATE venues SET price_per_guest = 2500 WHERE venue_id = 7 AND price_per_guest = 0;
+--==============================================
+-- CREATING VIEWS 
+--==============================================
+
+create view user_view AS
+select * from users;
+
+select * from user_view
+
+create view booking_view as
+select* from bookings;
+
+create view venue_view as 
 select * from venues
-select * from bookings
-select * from users
 
+create view chat_view as
+select * from chat_messages
 
+create view review_view as 
+select * from reviews
+
+--==============================================
+-- VIEW SCHEMA 
+--==============================================
+use fse_shaadi_go
+select * from user_view
+select * from booking_view
+select * from venue_view
+select * from chat_view
+select * from review_view
