@@ -170,3 +170,115 @@ input[type="checkbox"] {
 @media (max-width: 700px) {
   .card { padding: 32px 24px; }
 }
+
+/* Add these styles to your existing SignUpCard.css */
+
+/* Role Toggle */
+.role-toggle {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    background: #f9f0f0;
+    border-radius: 10px;
+    padding: 5px;
+}
+
+.role-btn {
+    flex: 1;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+    color: #888;
+}
+
+.role-btn.active {
+    background: #4D0D0D;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(77, 13, 13, 0.3);
+}
+
+.role-btn:not(.active):hover {
+    background: #f0dede;
+    color: #4D0D0D;
+}
+/* Add these styles to your existing SignUpCard.css */
+
+/* Role Toggle */
+.role-toggle {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    background: #f9f0f0;
+    border-radius: 10px;
+    padding: 5px;
+}
+
+.role-btn {
+    flex: 1;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+    color: #888;
+}
+
+.role-btn.active {
+    background: #4D0D0D;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(77, 13, 13, 0.3);
+}
+
+.role-btn:not(.active):hover {
+    background: #f0dede;
+    color: #4D0D0D;
+}
+
+/* Role toggle buttons with SVG icons */
+.role-toggle {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    background: #f9f0f0;
+    border-radius: 10px;
+    padding: 5px;
+}
+
+.role-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+    color: #4D0D0D;
+}
+
+.role-btn.active {
+    background: #4D0D0D;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(77,13,13,0.25);
+}
+
+.role-btn:not(.active):hover {
+    background: #f0dede;
+    color: #4D0D0D;
+}
