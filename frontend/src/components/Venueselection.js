@@ -1,409 +1,288 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import axios from 'axios';
 import Header from './Header';
 import Footer from './Footer';
-import '../style/Booking.css';
+import '../style/Venuedetail.css';
+import {
+  IconVenue, IconGarden, IconMarquee, IconMosque, IconCastle, IconStar,
+  IconParking, IconAC, IconSound, IconCatering, IconDecor, IconCamera,
+  IconAccessibility, IconSecurity
+} from './Icons';
 
-const monthNames = ['January','February','March','April','May','June',
-  'July','August','September','October','November','December'];
+const CATEGORIES = ['all', 'hall', 'outdoor', 'decor', 'food', 'suite'];
+const CAT_LABELS  = { all:'All', hall:'Hall', outdoor:'Outdoor', decor:'Décor', food:'Catering', suite:'Suites' };
+const catCounts   = { all:18, hall:5, outdoor:4, decor:4, food:3, suite:2 };
 
-function Booking() {
-  const location     = useLocation();
-  const navigate     = useNavigate();
-  const venue        = location.state?.venue;
-  const loggedInUser = JSON.parse(localStorage.getItem('shaadigo_user') || 'null');
+// Gallery items — SVG icon instead of emoji
+const GalleryIcon = ({ cat, size = 48 }) => {
+  const props = { size, color: '#4D0D0D' };
+  const map = {
+    hall:    <IconVenue    {...props} />,
+    outdoor: <IconGarden   {...props} />,
+    decor:   <IconDecor    {...props} />,
+    food:    <IconCatering {...props} />,
+    suite:   <IconStar     {...props} />,
+  };
+  return map[cat] || <IconVenue {...props} />;
+};
 
-  const today = new Date();
-  const [viewYear, setViewYear]           = useState(today.getFullYear());
-  const [viewMonth, setViewMonth]         = useState(today.getMonth());
-  const [selectedDate, setSelectedDate]   = useState(null);
-  const [unavailableDates, setUnavailableDates] = useState([]);
-  const [calLoading, setCalLoading]       = useState(false);
-  const [message, setMessage]             = useState({ text: '', type: '' });
-  const [form, setForm] = useState({
-    fname: '', lname: '', phone: '',
-    eventType: '', guests: '', special: ''
-  });
+const galleryData = [
+  { idx:0,  caption:'Grand Banquet Hall — Main Floor',       cat:'hall',    h:'xl' },
+  { idx:1,  caption:'Lush Garden Lawn — Ceremony Area',      cat:'outdoor', h:'md' },
+  { idx:2,  caption:'Bridal Stage Floral Arrangement',       cat:'decor',   h:'lg' },
+  { idx:3,  caption:'Bridal Suite — Premium Dressing Room',  cat:'suite',   h:'sm' },
+  { idx:4,  caption:'Crystal Chandelier — Imported Italian', cat:'hall',    h:'md' },
+  { idx:5,  caption:'Catering Spread — 120 Dish Buffet',     cat:'food',    h:'lg' },
+  { idx:6,  caption:'Evening Facade — Illuminated Entry',    cat:'outdoor', h:'xl' },
+  { idx:7,  caption:'Candlelit Table Settings',              cat:'decor',   h:'sm' },
+  { idx:8,  caption:'Stage and Dance Floor Area',            cat:'hall',    h:'md' },
+  { idx:9,  caption:'Rooftop Terrace Lounge',               cat:'outdoor', h:'lg' },
+  { idx:10, caption:'Custom Wedding Cake Display',           cat:'food',    h:'sm' },
+  { idx:11, caption:"Groom's Preparation Room",              cat:'suite',   h:'md' },
+  { idx:12, caption:'Rose Petal Aisle Walkway',              cat:'decor',   h:'lg' },
+  { idx:13, caption:'VIP Lounge — Entrance Foyer',          cat:'hall',    h:'sm' },
+  { idx:14, caption:'Fountain & Water Feature',              cat:'outdoor', h:'md' },
+  { idx:15, caption:'High Tea & Chai Station',               cat:'food',    h:'lg' },
+  { idx:16, caption:'Evening Lighting — Full Setup',         cat:'hall',    h:'xl' },
+  { idx:17, caption:'Butterfly & Fairy Light Ceiling',       cat:'decor',   h:'md' },
+];
 
-  const venueId = venue?.venue_id ?? venue?.id;
+const amenities = [
+  { Icon: IconParking,       name:'Ample Parking',        desc:'Covered & open parking for 300+ vehicles with dedicated valet service.' },
+  { Icon: IconAC,            name:'Central AC & Heating', desc:'Climate-controlled throughout all indoor spaces for year-round comfort.' },
+  { Icon: IconSound,         name:'Sound & AV System',    desc:'Professional surround sound, LED screens, and live performance stage setup.' },
+  { Icon: IconCatering,      name:'In-house Catering',    desc:'120-dish menu options with dedicated chefs. Halal certified kitchen.' },
+  { Icon: IconDecor,         name:'Décor Services',       desc:'Full floral, lighting, and stage decoration by our in-house design team.' },
+  { Icon: IconCamera,        name:'Photography Spaces',   desc:'Designated backdrops, gardens, and studio-lit areas for photography.' },
+  { Icon: IconAccessibility, name:'Accessibility',        desc:'Elevator access, ramps, and dedicated accessible restrooms on all floors.' },
+  { Icon: IconSecurity,      name:'Security & CCTV',      desc:'24/7 on-site security team, CCTV coverage, and private event management.' },
+];
 
-  // price_per_guest from DB (renamed from price_per_event)
-  const pricePerGuest = Number(venue?.price_per_guest ?? venue?.price_per_guest ?? 0);
+function VenueDetail() {
+  const [reviews, setReviews]   = useState([]);
+  const location  = useLocation();
+  const navigate  = useNavigate();
+  const venue     = location.state?.venue;
+  const [activeCat, setActiveCat] = useState('all');
+  const [lbOpen, setLbOpen]       = useState(false);
+  const [lbIdx, setLbIdx]         = useState(0);
 
-  // Live calculation — updates as guests changes
-  const guestCount = parseInt(form.guests) || 0;
-  const hallPrice  = Math.round(pricePerGuest * guestCount);
-  const serviceFee = Math.round(hallPrice * 0.05);
-  const total      = hallPrice + serviceFee;
+  useEffect(() => { if (!venue) navigate('/venues'); }, [venue, navigate]);
+
+  const visible = galleryData.filter(g => activeCat === 'all' || g.cat === activeCat);
 
   useEffect(() => {
-    if (!venue)        navigate('/venues');
-    if (!loggedInUser) { alert('Please log in first.'); navigate('/'); }
-  }, []);
-
-  useEffect(() => {
-    if (!venueId) return;
-    setCalLoading(true);
-    fetch(`http://localhost:5001/api/booking/unavailable/${venueId}`)
-      .then(r => r.json())
-      .then(data => { if (data.success) setUnavailableDates(data.dates); })
-      .catch(() => {})
-      .finally(() => setCalLoading(false));
-  }, [venueId]);
-
-  if (!venue || !loggedInUser) return null;
-
-  const handleChange = (e) => setForm({ ...form, [e.target.id]: e.target.value });
-
-  const toDateStr = (y, m, d) =>
-    `${y}-${String(m + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-
-  const isPast        = (d) => new Date(viewYear, viewMonth, d) < new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const isUnavailable = (d) => unavailableDates.includes(toDateStr(viewYear, viewMonth, d));
-  const isToday       = (d) => d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear();
-  const isSelected    = (d) => selectedDate !== null && selectedDate.d === d && selectedDate.m === viewMonth && selectedDate.y === viewYear;
-
-  const handleDayClick = (d) => {
-    if (isPast(d) || isUnavailable(d)) return;
-    setSelectedDate({ d, m: viewMonth, y: viewYear });
-  };
-
-  const prevMonth = () => {
-    setSelectedDate(null);
-    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
-    else setViewMonth(m => m - 1);
-  };
-  const nextMonth = () => {
-    setSelectedDate(null);
-    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
-    else setViewMonth(m => m + 1);
-  };
-
-  const selectedDateStr = selectedDate
-    ? `${selectedDate.d} ${monthNames[selectedDate.m]} ${selectedDate.y}`
-    : 'Not selected';
-
-  const eventDateISO = selectedDate
-    ? toDateStr(selectedDate.y, selectedDate.m, selectedDate.d)
-    : null;
-
-  const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
-  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
-  const calDays = [];
-  for (let i = 0; i < firstDay; i++) calDays.push(null);
-  for (let d = 1; d <= daysInMonth; d++) calDays.push(d);
-
-  const handleConfirm = async () => {
-    if (!eventDateISO)
-      return setMessage({ text: 'Please select a date.', type: 'error' });
-    if (!form.fname || !form.lname || !form.phone || !form.eventType)
-      return setMessage({ text: 'Please fill in all required fields.', type: 'error' });
-    if (!form.guests || guestCount < 1)
-      return setMessage({ text: 'Please enter the number of expected guests.', type: 'error' });
-    if (guestCount > venue.capacity)
-      return setMessage({ text: `Guest count exceeds venue capacity of ${venue.capacity.toLocaleString()}.`, type: 'error' });
-
-    const payload = {
-      userId:      loggedInUser.user_id,
-      fname:       form.fname,
-      lname:       form.lname,
-      phone:       form.phone,
-      eventType:   form.eventType,
-      guests:      guestCount,
-      special:     form.special,
-      venueId,
-      eventDate:   eventDateISO,
-      advancePaid: serviceFee,
+    const handler = (e) => {
+      if (!lbOpen) return;
+      if (e.key === 'Escape')      setLbOpen(false);
+      if (e.key === 'ArrowLeft')   setLbIdx(i => (i - 1 + visible.length) % visible.length);
+      if (e.key === 'ArrowRight')  setLbIdx(i => (i + 1) % visible.length);
     };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [lbOpen, visible.length]);
 
-    try {
-      const response = await axios.post('http://localhost:5001/api/booking', payload);
-      if (response.data.success) {
-        setUnavailableDates(prev => [...prev, eventDateISO]);
-        setSelectedDate(null);
-        setMessage({ text: '🎉 Booking confirmed! Redirecting…', type: 'success' });
-        setTimeout(() => navigate('/venues'), 2500);
-      }
-    } catch (err) {
-      setMessage({ text: err.response?.data?.message || 'Something went wrong.', type: 'error' });
-    }
-  };
+  useEffect(() => {
+    if (!venue) return;
+    fetch(`http://localhost:5001/api/reviews/${venue.venue_id}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setReviews(d.reviews); })
+      .catch(() => {});
+  }, [venue]);
+
+  if (!venue) return null;
+
+  const openLb  = (idx) => { setLbIdx(idx); setLbOpen(true); };
+  const current = visible[lbIdx] || visible[0];
+
+  // Price display
+  const ppgRaw = Number(venue.price_per_guest ?? venue.price_per_event ?? 0);
+  const ppg    = Math.round(ppgRaw / 100) * 100;
+  const priceDisplay = ppg > 0
+    ? `PKR ${ppg.toLocaleString('en-IN')} / guest`
+    : venue.price ? `PKR ${venue.price}` : 'Price on request';
 
   return (
-    <div className="bk-page">
-      <Header />
-      <main className="bk-main">
+    <div className="vd-page">
 
-        <button className="bk-back" onClick={() => navigate('/venues')}>
+      {/* LIGHTBOX */}
+      {lbOpen && (
+        <div className="vd-lb" onClick={() => setLbOpen(false)}>
+          <div className="vd-lb-wrap" onClick={e => e.stopPropagation()}>
+            <div className={`vd-lb-img vd-bg-${current?.cat}`}>
+              <GalleryIcon cat={current?.cat} size={80} />
+            </div>
+            <button className="vd-lb-close" onClick={() => setLbOpen(false)}>✕</button>
+          </div>
+          <div className="vd-lb-bottom">
+            <button className="vd-lb-arrow" onClick={() => setLbIdx(i => (i - 1 + visible.length) % visible.length)}>←</button>
+            <div className="vd-lb-info">
+              <div className="vd-lb-caption">{current?.caption}</div>
+              <div className="vd-lb-counter">{lbIdx + 1} / {visible.length}</div>
+            </div>
+            <button className="vd-lb-arrow" onClick={() => setLbIdx(i => (i + 1) % visible.length)}>→</button>
+          </div>
+          <div className="vd-lb-thumbs">
+            {visible.map((g, i) => (
+              <div key={g.idx} className={`vd-lb-thumb vd-bg-${g.cat}${i === lbIdx ? ' active' : ''}`}
+                onClick={e => { e.stopPropagation(); setLbIdx(i); }}>
+                <GalleryIcon cat={g.cat} size={20} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Header />
+
+      {/* HERO */}
+      <div className="vd-hero">
+        <button className="vd-back" onClick={() => navigate('/venues')}>
           <svg viewBox="0 0 14 14" fill="none" width="13" height="13">
             <path d="M9 2L4 7l5 5" stroke="#4D0D0D" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
           Back to Venues
         </button>
 
-        <div className="bk-page-title">
-          <h1>Confirm Your Booking</h1>
-          <p>Fill in your details and choose your event date to reserve the venue.</p>
+        <div className="vd-meta-strip">
+          <div className="vd-meta-left">
+            <h1>{venue.name.split(' ').slice(0,-1).join(' ')} <em>{venue.name.split(' ').slice(-1)}</em></h1>
+            <div className="vd-pills">
+              <span className="vd-badge">{venue.city}</span>
+              <span className="vd-pill-sep"></span>
+              <span className="vd-pill">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6c0 3.5 4.5 8.5 4.5 8.5S12.5 9.5 12.5 6C12.5 3.5 10.5 1.5 8 1.5Z" stroke="#4D0D0D" strokeWidth="1.3"/><circle cx="8" cy="6" r="1.5" stroke="#4D0D0D" strokeWidth="1.3"/></svg>
+                {venue.location}
+              </span>
+              <span className="vd-pill-sep"></span>
+              <span className="vd-pill">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5" r="2" stroke="#4D0D0D" strokeWidth="1.3"/><path d="M1 13c0-2 2-3.5 5-3.5" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/><circle cx="11" cy="6" r="1.8" stroke="#4D0D0D" strokeWidth="1.3"/><path d="M8.5 13c0-2 1.5-3 2.5-3s2.5 1 2.5 3" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/></svg>
+                Up to {venue.capacity.toLocaleString()} guests
+              </span>
+              <span className="vd-pill-sep"></span>
+              <span className="vd-pill">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><polygon points="8,1 10,6 15,6 11,9.5 12.5,15 8,12 3.5,15 5,9.5 1,6 6,6" fill="#D4AF37"/></svg>
+                {venue.rating} ({venue.review_count} reviews)
+              </span>
+            </div>
+          </div>
+          <div className="vd-meta-right">
+            <div className="vd-price">{priceDisplay}</div>
+            <button className="vd-btn-book" onClick={() => navigate('/booking', { state: { venue } })}>
+              Book This Venue
+            </button>
+          </div>
         </div>
-        <div className="bk-gold-divider"></div>
 
-        <div className="bk-steps">
-          <div className="bk-step done">
-            <div className="bk-step-circle">✓</div>
-            <span className="bk-step-label">Choose Venue</span>
+        <div className="vd-hero-grid">
+          <div className="vd-hero-main vd-bg-hall" onClick={() => { setActiveCat('all'); openLb(0); }}>
+            <div className="vd-hero-icon"><IconVenue size={80} color="#4D0D0D" /></div>
+            <div className="vd-photo-badge">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 4h3l2-2h6l2 2h1v10H2V4Z" stroke="#fff" strokeWidth="1.3"/><circle cx="8" cy="9" r="2.5" stroke="#fff" strokeWidth="1.3"/></svg>
+              18 Photos
+            </div>
+            <div className="vd-hover-overlay"><div className="vd-view-icon">View Gallery</div></div>
           </div>
-          <div className="bk-step-line"></div>
-          <div className="bk-step active">
-            <div className="bk-step-circle">2</div>
-            <span className="bk-step-label">Booking Details</span>
-          </div>
-          <div className="bk-step-line"></div>
-          <div className="bk-step">
-            <div className="bk-step-circle">3</div>
-            <span className="bk-step-label">Confirmation</span>
+          <div className="vd-hero-right">
+            <div className="vd-hero-thumb vd-bg-decor" onClick={() => { setActiveCat('all'); openLb(2); }}>
+              <div className="vd-hero-icon-sm"><IconDecor size={40} color="#4D0D0D" /></div>
+              <div className="vd-hover-overlay"><div className="vd-view-icon">View</div></div>
+            </div>
+            <div className="vd-hero-thumb vd-bg-outdoor" onClick={() => { setActiveCat('all'); openLb(6); }}>
+              <div className="vd-hero-icon-sm"><IconGarden size={40} color="#4D0D0D" /></div>
+              <div className="vd-hover-overlay"><div className="vd-view-icon">View</div></div>
+              <button className="vd-show-all" onClick={e => { e.stopPropagation(); openLb(0); }}>
+                ⊞ Show all photos
+              </button>
+            </div>
           </div>
         </div>
+      </div>
 
-        {message.text && (
-          <div className={`bk-message ${message.type}`}>{message.text}</div>
-        )}
-
-        <div className="bk-layout">
-          {/* ── FORM ── */}
-          <div className="bk-form-card">
-            <div style={{
-              background:'rgba(212,175,55,0.1)', border:'1px solid rgba(212,175,55,0.3)',
-              borderRadius:'8px', padding:'10px 14px', marginBottom:'20px',
-              fontSize:'0.82rem', color:'var(--maroon)'
-            }}>
-              Booking as: <strong>{loggedInUser.username}</strong>
+      {/* GALLERY */}
+      <div className="vd-gallery">
+        <div className="vd-section-row">
+          <div className="vd-section-heading">Media <em>Gallery</em></div>
+          <div className="vd-cat-tabs">
+            {CATEGORIES.map(cat => (
+              <button key={cat} className={`vd-cat-tab${activeCat === cat ? ' active' : ''}`}
+                onClick={() => { setActiveCat(cat); setLbIdx(0); }}>
+                {CAT_LABELS[cat]} <span className="vd-tab-count">{catCounts[cat]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="vd-masonry">
+          {visible.map((g, i) => (
+            <div key={g.idx} className="vd-gal-item" onClick={() => openLb(i)}>
+              <div className={`vd-gal-ph vd-h-${g.h} vd-bg-${g.cat}`}>
+                <GalleryIcon cat={g.cat} size={40} />
+              </div>
+              <span className="vd-gal-tag">{CAT_LABELS[g.cat]}</span>
+              <div className="vd-gal-overlay"><div className="vd-gal-caption">{g.caption}</div></div>
             </div>
+          ))}
+        </div>
+      </div>
 
-            <div className="bk-section-title">Personal Details</div>
-            <div className="bk-field-row">
-              <div className="bk-field">
-                <label htmlFor="fname">First Name</label>
-                <div className="bk-input-wrap">
-                  <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5.5" r="2.5" stroke="#4D0D0D" strokeWidth="1.4"/><path d="M2.5 13c0-2.485 2.462-4.5 5.5-4.5s5.5 2.015 5.5 4.5" stroke="#4D0D0D" strokeWidth="1.4" strokeLinecap="round"/></svg>
-                  <input type="text" id="fname" placeholder="Ali" value={form.fname} onChange={handleChange}/>
-                </div>
-              </div>
-              <div className="bk-field">
-                <label htmlFor="lname">Last Name</label>
-                <div className="bk-input-wrap">
-                  <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5.5" r="2.5" stroke="#4D0D0D" strokeWidth="1.4"/><path d="M2.5 13c0-2.485 2.462-4.5 5.5-4.5s5.5 2.015 5.5 4.5" stroke="#4D0D0D" strokeWidth="1.4" strokeLinecap="round"/></svg>
-                  <input type="text" id="lname" placeholder="Hassan" value={form.lname} onChange={handleChange}/>
-                </div>
-              </div>
+      {/* AMENITIES */}
+      <div className="vd-amenities">
+        <div className="vd-section-row" style={{marginBottom:'18px'}}>
+          <div className="vd-section-heading">Venue <em>Amenities</em></div>
+        </div>
+        <div className="vd-amenities-grid">
+          {amenities.map(a => (
+            <div key={a.name} className="vd-amenity-card">
+              <div className="vd-amenity-icon-wrap"><a.Icon size={36} color="#4D0D0D" /></div>
+              <div className="vd-amenity-name">{a.name}</div>
+              <div className="vd-amenity-desc">{a.desc}</div>
             </div>
+          ))}
+        </div>
+      </div>
 
-            <div className="bk-field">
-              <label htmlFor="phone">Phone Number</label>
-              <div className="bk-input-wrap">
-                <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><path d="M3 2h3l1.5 3.5-1.5 1a9 9 0 0 0 3.5 3.5l1-1.5L14 10v3a1 1 0 0 1-1 1C5 14 2 7 2 3a1 1 0 0 1 1-1Z" stroke="#4D0D0D" strokeWidth="1.3"/></svg>
-                <input type="tel" id="phone" placeholder="+92 300 1234567" value={form.phone} onChange={handleChange}/>
-              </div>
-            </div>
-
-            <div className="bk-form-divider"></div>
-            <div className="bk-section-title">Event Details</div>
-
-            <div className="bk-field-row">
-              <div className="bk-field">
-                <label htmlFor="eventType">Event Type</label>
-                <div className="bk-input-wrap bk-select-wrap">
-                  <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6c0 3.5 4.5 8.5 4.5 8.5S12.5 9.5 12.5 6C12.5 3.5 10.5 1.5 8 1.5Z" stroke="#4D0D0D" strokeWidth="1.3"/><circle cx="8" cy="6" r="1.5" stroke="#4D0D0D" strokeWidth="1.3"/></svg>
-                  <select id="eventType" value={form.eventType} onChange={handleChange}>
-                    <option value="">Select event type</option>
-                    <option>Barat</option>
-                    <option>Walima</option>
-                    <option>Mehndi / Dholki</option>
-                    <option>Engagement</option>
-                    <option>Corporate Event</option>
-                  </select>
-                </div>
-              </div>
-              <div className="bk-field">
-                <label htmlFor="guests">
-                  Expected Guests
-                  <span style={{fontSize:'0.75rem', color:'#888', marginLeft:6}}>
-                    (max {Number(venue.capacity).toLocaleString()})
-                  </span>
-                </label>
-                <div className="bk-input-wrap">
-                  <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5" r="2" stroke="#4D0D0D" strokeWidth="1.3"/><path d="M1 13c0-2 2-3.5 5-3.5" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/><circle cx="11" cy="6" r="1.8" stroke="#4D0D0D" strokeWidth="1.3"/><path d="M8.5 13c0-2 1.5-3 2.5-3s2.5 1 2.5 3" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/></svg>
-                  <input type="number" id="guests" placeholder="e.g. 300" min="1" max={venue.capacity} value={form.guests} onChange={handleChange}/>
-                </div>
-                {/* Live per-guest rate hint */}
-                {pricePerGuest > 0 && (
-                  <div style={{fontSize:'0.75rem', color:'#888', marginTop:4}}>
-                    Rs {pricePerGuest.toLocaleString()} per guest
+      {/* REVIEWS */}
+      <div className="vd-reviews">
+        <div className="vd-section-row" style={{marginBottom:'18px'}}>
+          <div className="vd-section-heading">Guest <em>Reviews</em></div>
+          <div className="vd-reviews-summary">
+            <span className="vd-reviews-avg">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><polygon points="8,1 10,6 15,6 11,9.5 12.5,15 8,12 3.5,15 5,9.5 1,6 6,6" fill="#D4AF37"/></svg>
+              {venue.rating}
+            </span>
+            <span className="vd-reviews-count">({venue.review_count} reviews)</span>
+          </div>
+        </div>
+        {reviews.length === 0 ? (
+          <div className="vd-no-reviews">No reviews yet — be the first to share your experience!</div>
+        ) : (
+          <div className="vd-reviews-grid">
+            {reviews.map(r => (
+              <div key={r.review_id} className="vd-review-card">
+                <div className="vd-review-top">
+                  <div className="vd-review-avatar">{r.username.charAt(0).toUpperCase()}</div>
+                  <div>
+                    <div className="vd-review-username">{r.username}</div>
+                    <div className="vd-review-event">{r.event_type}</div>
                   </div>
-                )}
-              </div>
-            </div>
-
-            <div className="bk-field">
-              <label htmlFor="special">Special Requests</label>
-              <div className="bk-input-wrap">
-                <textarea id="special" placeholder="Any specific requirements, décor preferences, catering notes…" value={form.special} onChange={handleChange}></textarea>
-              </div>
-            </div>
-
-            <div className="bk-form-divider"></div>
-            <div className="bk-section-title">Venue Info</div>
-
-            <div className="bk-field-row">
-              <div className="bk-field">
-                <label>Venue Name</label>
-                <div className="bk-input-wrap">
-                  <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><rect x="2" y="7" width="12" height="8" rx="1" stroke="#4D0D0D" strokeWidth="1.3"/><path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/></svg>
-                  <input type="text" value={venue.name} readOnly style={{opacity:0.6,cursor:'default'}}/>
+                  <div className="vd-review-stars">
+                    {'★'.repeat(Math.round(r.rating))}{'☆'.repeat(5 - Math.round(r.rating))}
+                    <span className="vd-review-rating-val">{r.rating}</span>
+                  </div>
+                </div>
+                {r.review_text && <div className="vd-review-text">"{r.review_text}"</div>}
+                <div className="vd-review-date">
+                  {new Date(r.created_at).toLocaleDateString('en-PK', { day:'numeric', month:'long', year:'numeric' })}
                 </div>
               </div>
-              <div className="bk-field">
-                <label>Location</label>
-                <div className="bk-input-wrap">
-                  <svg className="bk-input-icon" viewBox="0 0 16 16" fill="none"><path d="M8 1.5C5.5 1.5 3.5 3.5 3.5 6c0 3.5 4.5 8.5 4.5 8.5S12.5 9.5 12.5 6C12.5 3.5 10.5 1.5 8 1.5Z" stroke="#4D0D0D" strokeWidth="1.3"/><circle cx="8" cy="6" r="1.5" stroke="#4D0D0D" strokeWidth="1.3"/></svg>
-                  <input type="text" value={venue.location} readOnly style={{opacity:0.6,cursor:'default'}}/>
-                </div>
-              </div>
-            </div>
+            ))}
           </div>
+        )}
+      </div>
 
-          {/* ── SIDEBAR ── */}
-          <div className="bk-sidebar">
-
-            {/* AVAILABILITY CALENDAR */}
-            <div className="bk-sidebar-card">
-              <h3>
-                <svg viewBox="0 0 16 16" fill="none" width="15" height="15">
-                  <path d="M2 5h12M2 8h8M5 2v2M11 2v2" stroke="#4D0D0D" strokeWidth="1.3" strokeLinecap="round"/>
-                  <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="#4D0D0D" strokeWidth="1.3"/>
-                </svg>
-                Availability Calendar
-              </h3>
-
-              {calLoading && (
-                <div style={{textAlign:'center', fontSize:'0.78rem', opacity:0.5, padding:'8px 0 4px'}}>
-                  Loading availability…
-                </div>
-              )}
-
-              <div className="bk-cal-header">
-                <button className="bk-cal-nav" onClick={prevMonth}>←</button>
-                <span className="bk-cal-month">{monthNames[viewMonth]} {viewYear}</span>
-                <button className="bk-cal-nav" onClick={nextMonth}>→</button>
-              </div>
-
-              <div className="bk-cal-grid">
-                {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
-                  <div key={d} className="bk-cal-day-name">{d}</div>
-                ))}
-                {calDays.map((d, i) => {
-                  if (!d) return <div key={`e-${i}`} className="bk-cal-day empty"></div>;
-                  const past   = isPast(d);
-                  const booked = isUnavailable(d);
-                  const sel    = isSelected(d);
-                  const tod    = isToday(d);
-                  let cls = 'bk-cal-day';
-                  if (sel)         cls += ' selected';
-                  else if (past)   cls += ' past';
-                  else if (booked) cls += ' booked';
-                  else if (tod)    cls += ' today';
-                  return (
-                    <div key={d} className={cls} onClick={() => handleDayClick(d)}
-                      title={booked ? 'Already booked' : past ? 'Past date' : ''}>
-                      {d}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="bk-cal-legend">
-                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'#4D0D0D'}}></div>Selected</div>
-                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.2)'}}></div>Booked</div>
-                <div className="bk-legend-item"><div className="bk-legend-dot" style={{border:'1px solid #D4AF37',background:'transparent'}}></div>Today</div>
-                <div className="bk-legend-item"><div className="bk-legend-dot" style={{background:'rgba(77,13,13,0.08)'}}></div>Past</div>
-              </div>
-
-              {selectedDate && (
-                <div style={{
-                  marginTop:'12px', padding:'8px 12px',
-                  background:'rgba(212,175,55,0.12)', borderRadius:'7px',
-                  fontSize:'0.8rem', color:'var(--maroon)', textAlign:'center', fontWeight:600
-                }}>
-                  📅 {selectedDateStr}
-                </div>
-              )}
-            </div>
-
-            {/* BOOKING SUMMARY — live pricing */}
-            <div className="bk-sidebar-card">
-              <h3>
-                <svg viewBox="0 0 16 16" fill="none" width="15" height="15">
-                  <path d="M4 2h8a1 1 0 0 1 1 1v11l-4-2-4 2V3a1 1 0 0 1 1-1Z" stroke="#4D0D0D" strokeWidth="1.3"/>
-                </svg>
-                Booking Summary
-              </h3>
-              <div className="bk-summary-row"><span className="bk-lbl">Venue</span><span className="bk-val">{venue.name}</span></div>
-              <div className="bk-summary-row"><span className="bk-lbl">Location</span><span className="bk-val">{venue.location}</span></div>
-              <div className="bk-summary-row">
-                <span className="bk-lbl">Capacity</span>
-                <span className="bk-val">Up to {Number(venue.capacity).toLocaleString()} guests</span>
-              </div>
-              <div className="bk-summary-row">
-                <span className="bk-lbl">Price / Guest</span>
-                <span className="bk-val">PKR {pricePerGuest.toLocaleString()}</span>
-              </div>
-              <div className="bk-summary-row">
-                <span className="bk-lbl">Guests</span>
-                <span className="bk-val">{guestCount > 0 ? guestCount.toLocaleString() : '—'}</span>
-              </div>
-              <div className="bk-summary-row">
-                <span className="bk-lbl">Date</span>
-                <span className="bk-val bk-hi">{selectedDateStr}</span>
-              </div>
-              <div className="bk-summary-row">
-                <span className="bk-lbl">Event Type</span>
-                <span className="bk-val">{form.eventType || '—'}</span>
-              </div>
-              <div className="bk-summary-divider"></div>
-              <div className="bk-summary-row">
-                <span className="bk-lbl">Hall Price</span>
-                <span className="bk-val">
-                  {guestCount > 0
-                    ? `PKR ${hallPrice.toLocaleString('en-IN')}`
-                    : <span style={{color:'#aaa', fontSize:'0.8rem'}}>Enter guests to calculate</span>}
-                </span>
-              </div>
-              <div className="bk-summary-row">
-                <span className="bk-lbl">Service Fee (5%)</span>
-                <span className="bk-val">{guestCount > 0 ? `PKR ${serviceFee.toLocaleString()}` : '—'}</span>
-              </div>
-              <div className="bk-summary-divider"></div>
-              <div className="bk-summary-total">
-                <span className="bk-t-label">Total</span>
-                <span className="bk-t-price">
-                  {guestCount > 0 ? `PKR ${total.toLocaleString()}` : '—'}
-                </span>
-              </div>
-              <button className="bk-btn-confirm" onClick={handleConfirm}>Confirm Booking</button>
-              <div className="bk-secure-note">
-                <svg viewBox="0 0 16 16" fill="none" width="11" height="11">
-                  <path d="M8 1.5L3 4v4c0 3 2.5 5.5 5 6 2.5-.5 5-3 5-6V4L8 1.5Z" stroke="#4D0D0D" strokeWidth="1.3"/>
-                </svg>
-                Secure & encrypted booking
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </main>
       <Footer />
     </div>
   );
 }
 
-export default Booking;
+export default VenueDetail;
