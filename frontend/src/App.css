@@ -60,3 +60,81 @@ body {
   .tagline, .divider-v { display: none; }
   .App main { padding: 24px 16px; }
 }
+/* Add to your existing CSS files or create a new Icons.css and import it in App.css */
+
+/* VenueSelection banner icon */
+.vs-banner-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 8px auto 4px;
+  opacity: 0.85;
+}
+
+/* VenueSelection estimated price */
+.vs-price-est {
+  font-size: 0.72rem;
+  color: #888;
+  margin-top: 3px;
+  font-weight: 400;
+}
+
+/* AboutUs feature icon wrapper */
+.ab-feature-icon-wrap {
+  width: 60px;
+  height: 60px;
+  background: rgba(77,13,13,0.07);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+/* Contact inquiry type icon wrapper */
+.type-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+/* Contact sidebar channel icon */
+.ch-icon-wrap {
+  width: 38px;
+  height: 38px;
+  background: rgba(77,13,13,0.07);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* VenueDetail amenity icon */
+.vd-amenity-icon-wrap {
+  width: 56px;
+  height: 56px;
+  background: rgba(77,13,13,0.07);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+/* VenueDetail hero icon */
+.vd-hero-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  opacity: 0.7;
+}
+.vd-hero-icon-sm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  opacity: 0.7;
+}
