@@ -279,3 +279,511 @@ select * from booking_view
 select * from venue_view
 select * from chat_view
 select * from review_view
+
+-- ============================================================
+-- STORED PROCEDURES
+-- ============================================================
+
+
+-- ============================================================
+-- 1. Register New User
+-- ============================================================
+
+create procedure sp_register_user
+(
+    @username varchar(50),
+    @password_hash varchar(255),
+    @role varchar(10) = 'customer'
+)
+as
+begin
+
+    if exists (
+        select 1 from users where username = @username
+    )
+    begin
+        print 'Username already exists';
+        return;
+    end
+
+    insert into users(username, password_hash, role)
+    values(@username, @password_hash, @role);
+
+    print 'User registered successfully';
+
+end
+go
+
+
+-- ============================================================
+-- 2. Book Venue
+-- ============================================================
+
+create procedure sp_book_venue
+(
+    @user_id int,
+    @venue_id int,
+    @fname varchar(50),
+    @lname varchar(50),
+    @phone varchar(20),
+    @event_type varchar(30),
+    @guest_count int,
+    @special_requests text,
+    @event_date date,
+    @advance_paid decimal(12,2)
+)
+as
+begin
+
+    declare @price_per_guest decimal(12,2);
+    declare @hall_price decimal(12,2);
+    declare @service_fee decimal(12,2);
+    declare @total_price decimal(12,2);
+
+    -- check availability
+    if exists (
+        select 1
+        from venue_unavailable_dates
+        where venue_id = @venue_id
+        and unavailable_date = @event_date
+    )
+    begin
+        print 'Venue already booked on this date';
+        return;
+    end
+
+    -- get venue price
+    select @price_per_guest = price_per_guest
+    from venues
+    where venue_id = @venue_id;
+
+    set @hall_price = @price_per_guest * @guest_count;
+    set @service_fee = @hall_price * 0.05;
+    set @total_price = @hall_price + @service_fee;
+
+    insert into bookings
+    (
+        user_id,
+        venue_id,
+        fname,
+        lname,
+        phone,
+        event_type,
+        guest_count,
+        special_requests,
+        event_date,
+        hall_price,
+        service_fee,
+        total_price,
+        advance_paid
+    )
+    values
+    (
+        @user_id,
+        @venue_id,
+        @fname,
+        @lname,
+        @phone,
+        @event_type,
+        @guest_count,
+        @special_requests,
+        @event_date,
+        @hall_price,
+        @service_fee,
+        @total_price,
+        @advance_paid
+    );
+
+    print 'Booking successful';
+
+end
+go
+
+
+-- ============================================================
+-- 3. Cancel Booking
+-- ============================================================
+
+create procedure sp_cancel_booking
+(
+    @booking_id int
+)
+as
+begin
+
+    declare @event_date date;
+    declare @advance_paid decimal(12,2);
+    declare @refund_percent int;
+    declare @refund_amount decimal(12,2);
+
+    select
+        @event_date = event_date,
+        @advance_paid = advance_paid
+    from bookings
+    where booking_id = @booking_id;
+
+    -- refund policy
+    if datediff(day, getdate(), @event_date) >= 30
+        set @refund_percent = 80;
+    else if datediff(day, getdate(), @event_date) >= 15
+        set @refund_percent = 50;
+    else
+        set @refund_percent = 20;
+
+    set @refund_amount =
+        (@advance_paid * @refund_percent) / 100;
+
+    update bookings
+    set
+        status = 'cancelled',
+        refund_percent = @refund_percent,
+        refund_amount = @refund_amount,
+        refund_status = 'processed',
+        cancelled_at = getdate()
+    where booking_id = @booking_id;
+
+    print 'Booking cancelled successfully';
+
+end
+go
+
+
+-- ============================================================
+-- 4. Add Review
+-- ============================================================
+
+create procedure sp_add_review
+(
+    @booking_id int,
+    @user_id int,
+    @venue_id int,
+    @rating decimal(2,1),
+    @review_text nvarchar(max)
+)
+as
+begin
+
+    if exists (
+        select 1 from reviews
+        where booking_id = @booking_id
+    )
+    begin
+        print 'Review already exists for this booking';
+        return;
+    end
+
+    insert into reviews
+    (
+        booking_id,
+        user_id,
+        venue_id,
+        rating,
+        review_text
+    )
+    values
+    (
+        @booking_id,
+        @user_id,
+        @venue_id,
+        @rating,
+        @review_text
+    );
+
+    print 'Review added successfully';
+
+end
+go
+
+
+-- ============================================================
+-- 5. Send Chat Message
+-- ============================================================
+
+create procedure sp_send_message
+(
+    @booking_id int,
+    @user_id int,
+    @sender varchar(10),
+    @message nvarchar(max)
+)
+as
+begin
+
+    insert into chat_messages
+    (
+        booking_id,
+        user_id,
+        sender,
+        message
+    )
+    values
+    (
+        @booking_id,
+        @user_id,
+        @sender,
+        @message
+    );
+
+    print 'Message sent';
+
+end
+go
+
+
+-- ============================================================
+-- 6. Venue Search By City
+-- ============================================================
+
+create procedure sp_search_venues
+(
+    @city varchar(50)
+)
+as
+begin
+
+    select *
+    from venues
+    where city = @city
+    order by rating desc;
+
+end
+go
+
+
+
+-- ============================================================
+-- TRIGGERS
+-- ============================================================
+
+
+-- ============================================================
+-- 1. Prevent Double Booking
+-- ============================================================
+
+create trigger trg_prevent_double_booking
+on bookings
+instead of insert
+as
+begin
+
+    declare @venue_id int;
+    declare @event_date date;
+
+    select
+        @venue_id = venue_id,
+        @event_date = event_date
+    from inserted;
+
+    if exists (
+        select 1
+        from bookings
+        where venue_id = @venue_id
+        and event_date = @event_date
+        and status <> 'cancelled'
+    )
+    begin
+        raiserror('Venue already booked for this date',16,1);
+        rollback transaction;
+        return;
+    end
+
+    insert into bookings
+    (
+        user_id,
+        venue_id,
+        fname,
+        lname,
+        phone,
+        event_type,
+        guest_count,
+        special_requests,
+        event_date,
+        hall_price,
+        service_fee,
+        total_price,
+        advance_paid,
+        status
+    )
+    select
+        user_id,
+        venue_id,
+        fname,
+        lname,
+        phone,
+        event_type,
+        guest_count,
+        special_requests,
+        event_date,
+        hall_price,
+        service_fee,
+        total_price,
+        advance_paid,
+        status
+    from inserted;
+
+end
+go
+
+
+-- ============================================================
+-- 2. Add Unavailable Date Automatically
+-- ============================================================
+
+create trigger trg_add_unavailable_date
+on bookings
+after insert
+as
+begin
+
+    insert into venue_unavailable_dates
+    (
+        venue_id,
+        unavailable_date
+    )
+    select
+        venue_id,
+        event_date
+    from inserted;
+
+end
+go
+
+
+-- ============================================================
+-- 3. Update Venue Rating Automatically
+-- ============================================================
+
+create trigger trg_update_venue_rating
+on reviews
+after insert
+as
+begin
+
+    declare @venue_id int;
+
+    select @venue_id = venue_id
+    from inserted;
+
+    update venues
+    set
+        rating =
+        (
+            select avg(rating)
+            from reviews
+            where venue_id = @venue_id
+        ),
+
+        review_count =
+        (
+            select count(*)
+            from reviews
+            where venue_id = @venue_id
+        )
+
+    where venue_id = @venue_id;
+
+end
+go
+
+
+-- ============================================================
+-- 4. Prevent Guest Count Exceeding Capacity
+-- ============================================================
+
+create trigger trg_check_capacity
+on bookings
+instead of insert
+as
+begin
+
+    declare @capacity int;
+    declare @guest_count int;
+    declare @venue_id int;
+
+    select
+        @venue_id = venue_id,
+        @guest_count = guest_count
+    from inserted;
+
+    select
+        @capacity = capacity
+    from venues
+    where venue_id = @venue_id;
+
+    if @guest_count > @capacity
+    begin
+        raiserror('Guest count exceeds venue capacity',16,1);
+        rollback transaction;
+        return;
+    end
+
+    insert into bookings
+    (
+        user_id,
+        venue_id,
+        fname,
+        lname,
+        phone,
+        event_type,
+        guest_count,
+        special_requests,
+        event_date,
+        hall_price,
+        service_fee,
+        total_price,
+        advance_paid,
+        status
+    )
+    select
+        user_id,
+        venue_id,
+        fname,
+        lname,
+        phone,
+        event_type,
+        guest_count,
+        special_requests,
+        event_date,
+        hall_price,
+        service_fee,
+        total_price,
+        advance_paid,
+        status
+    from inserted;
+
+end
+go
+
+
+-- ============================================================
+-- 5. Log Deleted Reviews
+-- ============================================================
+
+create table deleted_reviews_log
+(
+    log_id int identity(1,1) primary key,
+    review_id int,
+    venue_id int,
+    deleted_at datetime default getdate()
+);
+go
+
+create trigger trg_log_deleted_review
+on reviews
+after delete
+as
+begin
+
+    insert into deleted_reviews_log
+    (
+        review_id,
+        venue_id
+    )
+    select
+        review_id,
+        venue_id
+    from deleted;
+
+end
+go
+
