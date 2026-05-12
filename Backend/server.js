@@ -36,17 +36,23 @@ app.post('/api/signup', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid role.' });
   try {
     await poolConnect;
+    // Check duplicate before calling SP (SP uses PRINT not error for duplicate)
     const existing = await pool.request()
       .input('username', sql.VarChar, username)
       .query('SELECT user_id FROM users WHERE username = @username');
     if (existing.recordset.length > 0)
       return res.status(409).json({ success: false, message: 'Username already taken. Please choose another.' });
-    const insert = await pool.request()
+    // Call stored procedure sp_register_user
+    await pool.request()
+      .input('username',      sql.VarChar, username)
+      .input('password_hash', sql.VarChar, password)
+      .input('role',          sql.VarChar, role)
+      .execute('sp_register_user');
+    // Get the new user_id
+    const newUser = await pool.request()
       .input('username', sql.VarChar, username)
-      .input('password', sql.VarChar, password)
-      .input('role',     sql.VarChar, role)
-      .query('INSERT INTO users (username, password_hash, role) OUTPUT INSERTED.user_id VALUES (@username, @password, @role)');
-    res.json({ success: true, message: 'Account created successfully! You can now log in.', user_id: insert.recordset[0].user_id });
+      .query('SELECT user_id FROM users WHERE username = @username');
+    res.json({ success: true, message: 'Account created successfully! You can now log in.', user_id: newUser.recordset[0].user_id });
   } catch (err) {
     console.error('Signup error:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -178,6 +184,14 @@ app.get('/api/venues/search', async (req, res) => {
   const { search, city, minPrice, maxPrice, minCapacity } = req.query;
   try {
     await poolConnect;
+    // For city-only filter use sp_search_venues SP, otherwise use dynamic query
+    if (city && !search && !minPrice && !maxPrice && !minCapacity) {
+      const result = await pool.request()
+        .input('city', sql.VarChar, city)
+        .execute('sp_search_venues');
+      return res.json({ success: true, venues: result.recordset });
+    }
+    // Dynamic multi-filter query for combined filters
     const request = pool.request();
     let query = 'SELECT * FROM venues WHERE 1=1';
     if (search) {
@@ -253,32 +267,32 @@ app.patch('/api/booking/:bookingId/cancel', async (req, res) => {
   const { userId } = req.body;
   try {
     await poolConnect;
+    // Validate ownership before calling SP
     const check = await pool.request()
       .input('bookingId', sql.Int, req.params.bookingId)
       .input('userId',    sql.Int, userId)
-      .query(`SELECT booking_id, venue_id, event_date, advance_paid
-              FROM bookings
+      .query(`SELECT booking_id FROM bookings
               WHERE booking_id = @bookingId AND user_id = @userId AND status != 'cancelled'`);
     if (check.recordset.length === 0)
       return res.status(404).json({ success: false, message: 'Booking not found or already cancelled.' });
-    const { venue_id, event_date, advance_paid } = check.recordset[0];
-    const today     = new Date(); today.setHours(0,0,0,0);
-    const eventDay  = new Date(event_date); eventDay.setHours(0,0,0,0);
-    const daysUntil = Math.ceil((eventDay - today) / (1000 * 60 * 60 * 24));
-    let refundPercent = daysUntil > 7 ? 90 : daysUntil >= 5 ? 80 : daysUntil >= 3 ? 50 : daysUntil >= 1 ? 30 : 0;
-    const refundAmount = parseFloat(((advance_paid * refundPercent) / 100).toFixed(2));
+    // Call stored procedure sp_cancel_booking
+    // SP handles: days calc, refund policy, status update, free date
     await pool.request()
-      .input('bookingId',     sql.Int,          req.params.bookingId)
-      .input('refundPercent', sql.Int,          refundPercent)
-      .input('refundAmount',  sql.Decimal(12,2), refundAmount)
-      .query(`UPDATE bookings SET status='cancelled', refund_percent=@refundPercent,
-              refund_amount=@refundAmount, refund_status='pending', cancelled_at=GETDATE()
-              WHERE booking_id = @bookingId`);
-    await pool.request()
-      .input('venueId',   sql.Int,  venue_id)
-      .input('eventDate', sql.Date, event_date)
-      .query(`DELETE FROM venue_unavailable_dates WHERE venue_id=@venueId AND unavailable_date=@eventDate`);
-    res.json({ success: true, message: 'Booking cancelled successfully.', refundPercent, refundAmount, daysUntil });
+      .input('booking_id', sql.Int, req.params.bookingId)
+      .execute('sp_cancel_booking');
+    // Fetch updated booking to return refund details
+    const updated = await pool.request()
+      .input('bookingId', sql.Int, req.params.bookingId)
+      .query(`SELECT refund_percent, refund_amount,
+              DATEDIFF(DAY, CAST(GETDATE() AS DATE), event_date) AS days_until
+              FROM bookings WHERE booking_id = @bookingId`);
+    const { refund_percent, refund_amount, days_until } = updated.recordset[0];
+    res.json({
+      success: true, message: 'Booking cancelled successfully.',
+      refundPercent: refund_percent,
+      refundAmount:  refund_amount,
+      daysUntil:     days_until
+    });
   } catch (err) {
     console.error('Cancel error:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -327,7 +341,7 @@ app.get('/api/chat/:bookingId', async (req, res) => {
   }
 });
 
-// ── SEND CHAT MESSAGE (text only) ────────────────────────────────────────────
+// ── SEND CHAT MESSAGE — uses sp_send_message ─────────────────────────────────
 app.post('/api/chat/:bookingId', async (req, res) => {
   const { userId, message, senderRole } = req.body;
   const sender = senderRole === 'owner' ? 'owner' : 'customer';
@@ -340,15 +354,19 @@ app.post('/api/chat/:bookingId', async (req, res) => {
       .query(`SELECT booking_id FROM bookings WHERE booking_id = @bookingId`);
     if (check.recordset.length === 0)
       return res.status(403).json({ success: false, message: 'Booking not found.' });
-    const insert = await pool.request()
-      .input('bookingId', sql.Int,               req.params.bookingId)
-      .input('userId',    sql.Int,               userId)
-      .input('sender',    sql.VarChar,           sender)
-      .input('message',   sql.NVarChar(sql.MAX), message.trim())
-      .query(`INSERT INTO chat_messages (booking_id, user_id, sender, message)
-              OUTPUT INSERTED.message_id, INSERTED.sent_at
-              VALUES (@bookingId, @userId, @sender, @message)`);
-    res.json({ success: true, message_id: insert.recordset[0].message_id, sent_at: insert.recordset[0].sent_at });
+    // Call stored procedure sp_send_message
+    await pool.request()
+      .input('booking_id', sql.Int,               req.params.bookingId)
+      .input('user_id',    sql.Int,               userId)
+      .input('sender',     sql.VarChar,           sender)
+      .input('message',    sql.NVarChar(sql.MAX), message.trim())
+      .execute('sp_send_message');
+    // Get the inserted message details
+    const newMsg = await pool.request()
+      .input('bookingId', sql.Int, req.params.bookingId)
+      .query(`SELECT TOP 1 message_id, sent_at FROM chat_messages
+              WHERE booking_id = @bookingId ORDER BY sent_at DESC`);
+    res.json({ success: true, message_id: newMsg.recordset[0].message_id, sent_at: newMsg.recordset[0].sent_at });
   } catch (err) {
     console.error('Chat send error:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -362,23 +380,24 @@ app.post('/api/review', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Missing required fields.' });
   try {
     await poolConnect;
+    // Validate eligibility before calling SP
     const check = await pool.request()
-      .input('bookingId', sql.Int, bookingId).input('userId', sql.Int, userId).input('venueId', sql.Int, venueId)
+      .input('bookingId', sql.Int, bookingId)
+      .input('userId',    sql.Int, userId)
+      .input('venueId',   sql.Int, venueId)
       .query(`SELECT booking_id FROM bookings WHERE booking_id=@bookingId AND user_id=@userId
               AND venue_id=@venueId AND status='confirmed' AND event_date < CAST(GETDATE() AS DATE)`);
     if (check.recordset.length === 0)
       return res.status(403).json({ success: false, message: 'Not eligible to review this booking.' });
+    // Call stored procedure sp_add_review
+    // trg_update_venue_rating trigger fires automatically after INSERT to recalculate rating
     await pool.request()
-      .input('bookingId', sql.Int, bookingId).input('userId', sql.Int, userId).input('venueId', sql.Int, venueId)
-      .input('rating', sql.Decimal(2,1), rating).input('reviewText', sql.NVarChar(sql.MAX), reviewText || null)
-      .query(`INSERT INTO reviews (booking_id, user_id, venue_id, rating, review_text)
-              VALUES (@bookingId, @userId, @venueId, @rating, @reviewText)`);
-    await pool.request()
-      .input('venueId', sql.Int, venueId)
-      .query(`UPDATE venues SET
-                rating=(SELECT ROUND(AVG(CAST(rating AS FLOAT)),1) FROM reviews WHERE venue_id=@venueId),
-                review_count=(SELECT COUNT(*) FROM reviews WHERE venue_id=@venueId)
-              WHERE venue_id=@venueId`);
+      .input('booking_id',  sql.Int,               bookingId)
+      .input('user_id',     sql.Int,               userId)
+      .input('venue_id',    sql.Int,               venueId)
+      .input('rating',      sql.Decimal(2,1),      rating)
+      .input('review_text', sql.NVarChar(sql.MAX), reviewText || null)
+      .execute('sp_add_review');
     res.json({ success: true, message: 'Review submitted successfully!' });
   } catch (err) {
     if (err.message?.includes('uq_one_review_per_booking'))
