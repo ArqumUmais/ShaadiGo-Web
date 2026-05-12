@@ -441,6 +441,13 @@ begin
         refund_status = 'processed',
         cancelled_at = getdate()
     where booking_id = @booking_id;
+    DELETE FROM venue_unavailable_dates
+WHERE venue_id = (
+    SELECT venue_id
+    FROM bookings
+    WHERE booking_id = @booking_id
+)
+AND unavailable_date = @event_date;
 
     print 'Booking cancelled successfully';
 
