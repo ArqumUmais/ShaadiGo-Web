@@ -567,34 +567,51 @@ go
 -- 1. Prevent Double Booking
 -- ============================================================
 
-create trigger trg_prevent_double_booking
-on bookings
-instead of insert
-as
-begin
+CREATE TRIGGER trg_validate_booking
+ON bookings
+INSTEAD OF INSERT
+AS
+BEGIN
 
-    declare @venue_id int;
-    declare @event_date date;
+    DECLARE @venue_id INT;
+    DECLARE @event_date DATE;
+    DECLARE @guest_count INT;
+    DECLARE @capacity INT;
 
-    select
+    SELECT
         @venue_id = venue_id,
-        @event_date = event_date
-    from inserted;
+        @event_date = event_date,
+        @guest_count = guest_count
+    FROM inserted;
 
-    if exists (
-        select 1
-        from bookings
-        where venue_id = @venue_id
-        and event_date = @event_date
-        and status <> 'cancelled'
+    -- Double booking check
+    IF EXISTS (
+        SELECT 1
+        FROM bookings
+        WHERE venue_id = @venue_id
+        AND event_date = @event_date
+        AND status <> 'cancelled'
     )
-    begin
-        raiserror('Venue already booked for this date',16,1);
-        rollback transaction;
-        return;
-    end
+    BEGIN
+        RAISERROR('Venue already booked for this date',16,1);
+        ROLLBACK TRANSACTION;
+        RETURN;
+    END
 
-    insert into bookings
+    -- Capacity check
+    SELECT @capacity = capacity
+    FROM venues
+    WHERE venue_id = @venue_id;
+
+    IF @guest_count > @capacity
+    BEGIN
+        RAISERROR('Guest count exceeds venue capacity',16,1);
+        ROLLBACK TRANSACTION;
+        RETURN;
+    END
+
+    -- Insert booking
+    INSERT INTO bookings
     (
         user_id,
         venue_id,
@@ -611,7 +628,7 @@ begin
         advance_paid,
         status
     )
-    select
+    SELECT
         user_id,
         venue_id,
         fname,
@@ -626,11 +643,10 @@ begin
         total_price,
         advance_paid,
         status
-    from inserted;
+    FROM inserted;
 
-end
-go
-
+END
+GO
 
 -- ============================================================
 -- 2. Add Unavailable Date Automatically
@@ -693,77 +709,11 @@ end
 go
 
 
--- ============================================================
--- 4. Prevent Guest Count Exceeding Capacity
--- ============================================================
 
-create trigger trg_check_capacity
-on bookings
-instead of insert
-as
-begin
-
-    declare @capacity int;
-    declare @guest_count int;
-    declare @venue_id int;
-
-    select
-        @venue_id = venue_id,
-        @guest_count = guest_count
-    from inserted;
-
-    select
-        @capacity = capacity
-    from venues
-    where venue_id = @venue_id;
-
-    if @guest_count > @capacity
-    begin
-        raiserror('Guest count exceeds venue capacity',16,1);
-        rollback transaction;
-        return;
-    end
-
-    insert into bookings
-    (
-        user_id,
-        venue_id,
-        fname,
-        lname,
-        phone,
-        event_type,
-        guest_count,
-        special_requests,
-        event_date,
-        hall_price,
-        service_fee,
-        total_price,
-        advance_paid,
-        status
-    )
-    select
-        user_id,
-        venue_id,
-        fname,
-        lname,
-        phone,
-        event_type,
-        guest_count,
-        special_requests,
-        event_date,
-        hall_price,
-        service_fee,
-        total_price,
-        advance_paid,
-        status
-    from inserted;
-
-end
-go
 
 
 -- ============================================================
--- 5. Log Deleted Reviews
+-- 4. Log Deleted Reviews
 -- ============================================================
 
 create table deleted_reviews_log
