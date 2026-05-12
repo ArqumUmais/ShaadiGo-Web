@@ -82,64 +82,100 @@ app.post('/api/login', async (req, res) => {
 
 // ── BOOKING ───────────────────────────────────────────────────────────────────
 app.post('/api/booking', async (req, res) => {
-  const { userId, fname, lname, phone, eventType, guests, venueId, eventDate, advancePaid } = req.body;
-  if (!userId || !fname || !lname || !phone || !eventType || !venueId || !eventDate || !guests)
-    return res.status(400).json({ success: false, message: 'All required fields must be filled, including guest count.' });
+
+  const {
+    userId,
+    fname,
+    lname,
+    phone,
+    eventType,
+    guests,
+    venueId,
+    eventDate,
+    advancePaid,
+    special
+  } = req.body;
+
+  if (
+    !userId ||
+    !fname ||
+    !lname ||
+    !phone ||
+    !eventType ||
+    !venueId ||
+    !eventDate ||
+    !guests
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: 'All required fields must be filled.'
+    });
+  }
+
   try {
+
     await poolConnect;
-    const venueResult = await pool.request()
-      .input('venueId', sql.Int, venueId)
-      .query('SELECT venue_id, price_per_guest FROM venues WHERE venue_id = @venueId');
-    if (venueResult.recordset.length === 0)
-      return res.status(404).json({ success: false, message: 'Venue not found.' });
-    const guestCount    = parseInt(guests);
-    const pricePerGuest = parseFloat(venueResult.recordset[0].price_per_guest);
-    const hallPrice     = Math.round(pricePerGuest * guestCount);
-    const serviceFee    = Math.round(hallPrice * 0.05);
-    const totalPrice    = hallPrice + serviceFee;
-    const conflict = await pool.request()
-      .input('venueId',   sql.Int,  venueId)
-      .input('eventDate', sql.Date, eventDate)
-      .query(`SELECT booking_id FROM bookings WHERE venue_id = @venueId AND event_date = @eventDate AND status != 'cancelled'`);
-    if (conflict.recordset.length > 0)
-      return res.status(409).json({ success: false, message: 'This venue is already booked on that date.' });
-    const insert = await pool.request()
-      .input('userId',          sql.Int,               userId)
-      .input('venueId',         sql.Int,               venueId)
-      .input('fname',           sql.VarChar,           fname)
-      .input('lname',           sql.VarChar,           lname)
-      .input('phone',           sql.VarChar,           phone)
-      .input('eventType',       sql.VarChar,           eventType)
-      .input('guestCount',      sql.Int,               guestCount)
-      .input('specialRequests', sql.NVarChar(sql.MAX), req.body.special || null)
-      .input('eventDate',       sql.Date,              eventDate)
-      .input('hallPrice',       sql.Decimal(12,2),     hallPrice)
-      .input('serviceFee',      sql.Decimal(12,2),     serviceFee)
-      .input('totalPrice',      sql.Decimal(12,2),     totalPrice)
-      .input('advancePaid',     sql.Decimal(12,2),     advancePaid || 0)
-      .query(`INSERT INTO bookings
-          (user_id, venue_id, fname, lname, phone, event_type, guest_count,
-           special_requests, event_date, hall_price, service_fee, total_price, advance_paid, status)
-        OUTPUT INSERTED.booking_id
-        VALUES
-          (@userId, @venueId, @fname, @lname, @phone, @eventType, @guestCount,
-           @specialRequests, @eventDate, @hallPrice, @serviceFee, @totalPrice, @advancePaid, 'pending')`);
+
+    // Call stored procedure
     await pool.request()
-      .input('venueId',   sql.Int,  venueId)
-      .input('eventDate', sql.Date, eventDate)
-      .query(`IF NOT EXISTS (SELECT 1 FROM venue_unavailable_dates WHERE venue_id = @venueId AND unavailable_date = @eventDate)
-              INSERT INTO venue_unavailable_dates (venue_id, unavailable_date) VALUES (@venueId, @eventDate)`);
-    const bookingId = insert.recordset[0].booking_id;
+      .input('user_id',          sql.Int, userId)
+      .input('venue_id',         sql.Int, venueId)
+      .input('fname',            sql.VarChar(50), fname)
+      .input('lname',            sql.VarChar(50), lname)
+      .input('phone',            sql.VarChar(20), phone)
+      .input('event_type',       sql.VarChar(30), eventType)
+      .input('guest_count',      sql.Int, parseInt(guests))
+      .input('special_requests', sql.Text, special || null)
+      .input('event_date',       sql.Date, eventDate)
+      .input('advance_paid',     sql.Decimal(12,2), advancePaid || 0)
+      .execute('sp_book_venue');
+
+    // Get latest inserted booking
+    const latestBooking = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        SELECT TOP 1 booking_id
+        FROM bookings
+        WHERE user_id = @userId
+        ORDER BY booking_id DESC
+      `);
+
+    const bookingId = latestBooking.recordset[0].booking_id;
+
     res.json({
-      success: true, message: 'Booking confirmed successfully!', bookingId,
+      success: true,
+      message: 'Booking confirmed successfully!',
+      bookingId,
       reference: `SG-${new Date().getFullYear()}-${String(bookingId).padStart(5, '0')}`
     });
-  } catch (err) {
-    console.error('Booking error:', err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
+  } catch (err) {
+
+    console.error('Booking error:', err);
+
+    // Handle trigger/SP errors
+    if (err.message.includes('Venue already booked')) {
+      return res.status(409).json({
+        success: false,
+        message: 'This venue is already booked on that date.'
+      });
+    }
+
+    if (err.message.includes('Guest count exceeds venue capacity')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Guest count exceeds venue capacity.'
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+
+});
 // ── CONTACT ───────────────────────────────────────────────────────────────────
 app.post('/api/contact', async (req, res) => {
   const { fname, lname, email, phone, inquiryType, subject, bookingRef, priority, message } = req.body;
